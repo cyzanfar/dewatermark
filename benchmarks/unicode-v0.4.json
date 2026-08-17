@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "unicode_fixture_regression",
+  "artifact_name": "Unicode covert-channel fixture benchmark — v0.4",
+  "source_report": "unicode-v0.4.md",
+  "reported_run": {
+    "date": "2026-08-16",
+    "python_version": "3.12.11",
+    "seed": 13,
+    "command": "PYTHONPATH=src python eval/run_eval.py --skip-statistical",
+    "sanitization_profile": "aggressive",
+    "statistical_suite_run": false
+  },
+  "provenance": {
+    "status": "historical_partial",
+    "report_first_committed_in": "3e9bf6477d5cb4e0ee429865fac4f0be84d138b0",
+    "run_source_commit": null,
+    "run_source_commit_reason": "The source revision was not embedded in the original run output; report_first_committed_in is only a repository snapshot and reproduction anchor.",
+    "run_id": null,
+    "run_id_reason": "The historical harness did not record a content-addressed run ID for this report.",
+    "unicode_policy_sha256": null,
+    "unicode_policy_sha256_reason": "The canonical Unicode policy file was introduced after this v0.4 report and cannot be assigned retroactively."
+  },
+  "design": {
+    "fixture_kind": "synthetic_known_payload",
+    "families": 5,
+    "covers_per_family": 10,
+    "total_fixtures": 50,
+    "comparison": "The aggressive profile applied to each embedded cover was compared with the same profile applied to its original cover."
+  },
+  "results": [
+    {
+      "family": "zero_width",
+      "removed": 10,
+      "total": 10,
+      "rate": 1.0
+    },
+    {
+      "family": "variation_selector",
+      "removed": 10,
+      "total": 10,
+      "rate": 1.0
+    },
+    {
+      "family": "tags_block",
+      "removed": 10,
+      "total": 10,
+      "rate": 1.0
+    },
+    {
+      "family": "homoglyph",
+      "removed": 10,
+      "total": 10,
+      "rate": 1.0
+    },
+    {
+      "family": "exotic_space",
+      "removed": 10,
+      "total": 10,
+      "rate": 1.0
+    }
+  ],
+  "overall": {
+    "removed": 50,
+    "total": 50,
+    "rate": 1.0
+  },
+  "protocol_coverage": {
+    "unicode_fixture_regression": {
+      "status": "run",
+      "cases": 50
+    },
+    "statistical_watermark_evaluation": {
+      "status": "not_run",
+      "reason": "The reported command used --skip-statistical."
+    },
+    "independent_detector_evaluation": {
+      "status": "not_run",
+      "reason": "No detector, detector threshold, or statistical population was part of this fixture suite."
+    },
+    "task_and_language_strata": {
+      "status": "not_reported",
+      "reason": "The historical report did not record task or language strata."
+    },
+    "human_controls_and_blinded_review": {
+      "status": "not_reported",
+      "reason": "The historical report did not record human controls or a blinded review."
+    }
+  },
+  "claim_scope": {
+    "supports": [
+      "Deterministic behavior on the 50 disclosed synthetic fixtures under the aggressive profile."
+    ],
+    "does_not_support": [
+      "Statistical watermark mitigation",
+      "Semantic watermark mitigation",
+      "Cryptographic or retrieval-based watermark mitigation",
+      "Private or undisclosed vendor watermark mitigation",
+      "Universal watermark removal"
+    ]
+  }
+}

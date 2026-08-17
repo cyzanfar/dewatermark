@@ -1,0 +1,19 @@
+[
+  {"name": "plain", "input": "plain text", "safe": "plain text"},
+  {"name": "zero width payload", "input": "he\u200bllo", "safe": "hello"},
+  {"name": "ASCII ZWJ payload", "input": "he\u200dllo", "safe": "hello"},
+  {"name": "family emoji", "input": "👩\u200d👩\u200d👧\u200d👦", "safe": "👩\u200d👩\u200d👧\u200d👦"},
+  {"name": "Persian shaping", "input": "فارسی\u200cنویسی", "safe": "فارسی\u200cنویسی"},
+  {"name": "emoji variation", "input": "❤️", "safe": "❤️"},
+  {"name": "ASCII variation payload", "input": "a\ufe0fb", "safe": "ab"},
+  {"name": "keycap sequence", "input": "1\ufe0f\u20e3", "safe": "1\ufe0f\u20e3"},
+  {"name": "invalid tag payload", "input": "x\udb40\udc61\udb40\udc62", "safe": "x"},
+  {"name": "valid subdivision flag", "input": "🏴\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f", "safe": "🏴\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f"},
+  {"name": "leading BOM", "input": "\ufeffhello", "safe": "\ufeffhello"},
+  {"name": "embedded BOM", "input": "he\ufeffllo", "safe": "hello"},
+  {"name": "ASCII bidi override", "input": "a\u202eb", "safe": "ab"},
+  {"name": "RTL bidi context", "input": "فارسی \u202eRTL\u202c", "safe": "فارسی \u202eRTL\u202c"},
+  {"name": "space normalization", "input": "a\u00a0b\u202fc\u3000d", "safe": "a b c d"},
+  {"name": "line separator preservation", "input": "a\u2028b", "safe": "a\u2028b"},
+  {"name": "NFC normalization", "input": "cafe\u0301", "safe": "café"}
+]

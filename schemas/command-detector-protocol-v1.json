@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/command-detector-protocol-v1.json",
+  "title": "Dewatermark command detector protocol v1",
+  "oneOf": [
+    {"$ref": "#/$defs/detectRequest"},
+    {"$ref": "#/$defs/detectResponse"}
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "detectRequest": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "action",
+        "detector",
+        "configuration_sha256",
+        "policy",
+        "text"
+      ],
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "action": {"const": "detect"},
+        "detector": {"type": "string", "minLength": 1},
+        "configuration_sha256": {"$ref": "#/$defs/sha256"},
+        "policy": {
+          "type": "object",
+          "required": ["allow_network", "allow_model_download"],
+          "properties": {
+            "allow_network": {"type": "boolean"},
+            "allow_model_download": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
+        "text": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "detectResponse": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "action",
+        "detector",
+        "scheme",
+        "status",
+        "threshold",
+        "score_direction",
+        "effective_tokens",
+        "configuration_sha256"
+      ],
+      "properties": {
+        "protocol_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+        "action": {"const": "detect.result"},
+        "detector": {"type": "string", "minLength": 1},
+        "scheme": {"type": "string", "minLength": 1},
+        "status": {
+          "enum": [
+            "detected",
+            "not_detected",
+            "insufficient_evidence",
+            "unsupported",
+            "configuration_mismatch",
+            "detector_error"
+          ]
+        },
+        "score": {"type": ["number", "null"]},
+        "threshold": {"type": "number"},
+        "score_direction": {"enum": ["higher", "lower"]},
+        "effective_tokens": {"type": "integer", "minimum": 0},
+        "configuration_sha256": {"$ref": "#/$defs/sha256"},
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$"
+        },
+        "p_value": {"type": "number", "minimum": 0, "maximum": 1},
+        "z_score": {"type": "number"}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {"enum": ["detected", "not_detected"]}
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["score"],
+            "properties": {"score": {"type": "number"}}
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
+  }
+}

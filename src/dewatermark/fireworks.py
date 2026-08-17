@@ -18,7 +18,9 @@ from typing import Optional
 from .config import DewatermarkConfig, assert_remote_allowed, resolve
 from .exceptions import BackendUnavailableError
 from .http import post_json
+from .prompt_safety import INERT_DATA_INSTRUCTION, inert_block
 from .quality import evaluate_candidate
+from .request_context import public_quality_report, safe_error
 from .runtime import emit
 
 _LN2 = math.log(2)
@@ -60,8 +62,14 @@ def _headers(cfg: DewatermarkConfig) -> dict:
 def _allow(cfg: DewatermarkConfig) -> None:
     try:
         assert_remote_allowed(cfg.fireworks_base_url, cfg)
-    except PermissionError as exc:
-        raise FireworksError(str(exc)) from exc
+    except PermissionError:
+        denied = True
+    else:
+        denied = False
+    if denied:
+        raise FireworksError(
+            "Fireworks remote processing is not permitted by the active policy"
+        ) from None
 
 
 def self_information(text: str, config: Optional[DewatermarkConfig] = None) -> list[dict]:
@@ -78,6 +86,7 @@ def self_information(text: str, config: Optional[DewatermarkConfig] = None) -> l
         "max_tokens": 1,
         "temperature": 0,
     }
+    request_error: Optional[str]
     try:
         resp = post_json(
             f"{base}/completions",
@@ -89,16 +98,37 @@ def self_information(text: str, config: Optional[DewatermarkConfig] = None) -> l
             backend="fireworks",
         )
     except Exception as exc:
-        raise FireworksError(f"scoring request failed: {exc}") from exc
-    if resp.status_code != 200:
-        raise FireworksError(f"scoring HTTP {resp.status_code}: {resp.text[:200]}")
+        request_error = safe_error("Fireworks scoring request", exc)
+    else:
+        request_error = None
+    if request_error is not None:
+        raise FireworksError(request_error) from None
+    status_code = resp.status_code if type(resp.status_code) is int else 0
+    if status_code != 200:
+        if not status_code:
+            raise FireworksError(
+                "malformed Fireworks scoring response; response content was redacted"
+            ) from None
+        raise FireworksError(
+            f"Fireworks scoring returned HTTP {status_code}; response content was redacted"
+        )
 
+    malformed = False
+    lp: dict = {}
     try:
         payload = resp.json()
+        if not isinstance(payload, dict):
+            raise TypeError
         _emit_usage(cfg, payload)
         lp = payload["choices"][0].get("logprobs") or {}
-    except (KeyError, IndexError, ValueError) as exc:
-        raise FireworksError(f"malformed scoring response: {exc}") from exc
+        if not isinstance(lp, dict):
+            raise TypeError
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+        malformed = True
+    if malformed:
+        raise FireworksError(
+            "malformed Fireworks scoring response; response content was redacted"
+        ) from None
 
     tokens = lp.get("tokens") or []
     token_logprobs = lp.get("token_logprobs") or []
@@ -106,22 +136,47 @@ def self_information(text: str, config: Optional[DewatermarkConfig] = None) -> l
     offsets = lp.get("text_offset") or []
 
     out = []
-    for i, logprob in enumerate(token_logprobs):
-        if logprob is None:  # first prompt token has no left context
-            continue
-        start = offsets[i] if i < len(offsets) else 0
-        if start >= len(text):  # the appended generated token (max_tokens=1)
-            continue
-        end = offsets[i + 1] if i + 1 < len(offsets) else len(text)
-        out.append(
-            {
-                "token_id": token_ids[i] if i < len(token_ids) else -1,
-                "token_str": tokens[i] if i < len(tokens) else "",
-                "start": start,
-                "end": min(end, len(text)),
-                "surprisal_bits": -logprob / _LN2,
-            }
-        )
+    try:
+        if not all(
+            isinstance(value, list) for value in (tokens, token_logprobs, token_ids, offsets)
+        ):
+            raise TypeError
+        for i, logprob in enumerate(token_logprobs):
+            if logprob is None:  # first prompt token has no left context
+                continue
+            if isinstance(logprob, bool) or not isinstance(logprob, (int, float)):
+                raise TypeError
+            start = offsets[i] if i < len(offsets) else 0
+            if isinstance(start, bool) or not isinstance(start, int):
+                raise TypeError
+            if start >= len(text):  # the appended generated token (max_tokens=1)
+                continue
+            end = offsets[i + 1] if i + 1 < len(offsets) else len(text)
+            if isinstance(end, bool) or not isinstance(end, int):
+                raise TypeError
+            token_id = token_ids[i] if i < len(token_ids) else -1
+            token_str = tokens[i] if i < len(tokens) else ""
+            if isinstance(token_id, bool) or not isinstance(token_id, int):
+                raise TypeError
+            if not isinstance(token_str, str):
+                raise TypeError
+            out.append(
+                {
+                    "token_id": token_id,
+                    "token_str": token_str,
+                    "start": start,
+                    "end": min(end, len(text)),
+                    "surprisal_bits": -float(logprob) / _LN2,
+                }
+            )
+    except (IndexError, TypeError, ValueError):
+        malformed_tokens = True
+    else:
+        malformed_tokens = False
+    if malformed_tokens:
+        raise FireworksError(
+            "malformed Fireworks scoring response; response content was redacted"
+        ) from None
     return out
 
 
@@ -129,7 +184,7 @@ def surrogate_score(text: str, config: Optional[DewatermarkConfig] = None) -> di
     try:
         si = self_information(text, config)
     except FireworksError as exc:
-        return {"available": False, "reason": str(exc)}
+        return {"available": False, "reason": safe_error("Fireworks scoring", exc)}
     if not si:
         return {
             "available": True,
@@ -172,6 +227,7 @@ def chat(
         "reasoning_effort": "low",
         "max_tokens": min(cfg.max_output_tokens, max(256, len(user_text.split()) * 3 + 128)),
     }
+    request_error: Optional[str]
     try:
         resp = post_json(
             f"{base}/chat/completions",
@@ -183,15 +239,37 @@ def chat(
             backend="fireworks",
         )
     except Exception as exc:
-        raise FireworksError(f"chat request failed: {exc}") from exc
-    if resp.status_code != 200:
-        raise FireworksError(f"chat HTTP {resp.status_code}: {resp.text[:200]}")
+        request_error = safe_error("Fireworks chat request", exc)
+    else:
+        request_error = None
+    if request_error is not None:
+        raise FireworksError(request_error) from None
+    status_code = resp.status_code if type(resp.status_code) is int else 0
+    if status_code != 200:
+        if not status_code:
+            raise FireworksError(
+                "malformed Fireworks chat response; response content was redacted"
+            ) from None
+        raise FireworksError(
+            f"Fireworks chat returned HTTP {status_code}; response content was redacted"
+        )
+    malformed = False
+    content = ""
     try:
         payload = resp.json()
+        if not isinstance(payload, dict):
+            raise TypeError
         _emit_usage(cfg, payload)
-        content = (payload["choices"][0]["message"].get("content") or "").strip()
-    except (KeyError, IndexError, ValueError) as exc:
-        raise FireworksError(f"malformed chat response: {exc}") from exc
+        raw_content = payload["choices"][0]["message"].get("content")
+        if not isinstance(raw_content, str):
+            raise TypeError
+        content = raw_content.strip()
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+        malformed = True
+    if malformed:
+        raise FireworksError(
+            "malformed Fireworks chat response; response content was redacted"
+        ) from None
     if not content:
         raise FireworksError("empty chat content")
     return content
@@ -222,7 +300,7 @@ def _estimate_green(si: list[dict], quantile: float, cap: int = 250) -> list[int
 _REWRITE_SYSTEM = (
     "Rewrite the user's text in your own words. Preserve every fact, name, number, "
     "and the overall meaning exactly. Do not add commentary or disclaimers. Output "
-    "only the rewritten text."
+    f"only the rewritten text. {INERT_DATA_INSTRUCTION}"
 )
 
 
@@ -246,14 +324,14 @@ def bira_rewrite(
     try:
         _allow(cfg)
     except FireworksError as exc:
-        detail["error"] = str(exc)
+        detail["error"] = safe_error("Fireworks policy check", exc)
         detail["warning"] = "kept original"
         return text, detail
     base = cfg.fireworks_base_url.rstrip("/")
     try:
         si = self_information(text, cfg)
     except FireworksError as exc:
-        detail["error"] = str(exc)
+        detail["error"] = safe_error("Fireworks scoring", exc)
         detail["warning"] = "kept original"
         return text, detail
 
@@ -268,7 +346,7 @@ def bira_rewrite(
             "model": cfg.fireworks_model,
             "messages": [
                 {"role": "system", "content": _REWRITE_SYSTEM},
-                {"role": "user", "content": f"<SOURCE>\n{text}\n</SOURCE>"},
+                {"role": "user", "content": inert_block(text)},
             ],
             "temperature": 1.0,
             "top_p": 0.95,
@@ -288,37 +366,69 @@ def bira_rewrite(
                 backend="fireworks",
             )
         except Exception as exc:
-            attempts.append({"restart": restart, "beta": current_beta, "error": str(exc)})
+            attempts.append(
+                {"restart": restart, "beta": current_beta, "error": safe_error("rewrite", exc)}
+            )
             current_beta *= bias_backoff
             continue
-        if resp.status_code != 200:
+        status_code = resp.status_code if type(resp.status_code) is int else 0
+        if status_code != 200:
             attempts.append(
                 {
                     "restart": restart,
                     "beta": current_beta,
-                    "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
+                    "error": (
+                        f"HTTP {status_code}; response content was redacted"
+                        if status_code
+                        else "malformed rewrite response; response content was redacted"
+                    ),
                 }
             )
             current_beta *= bias_backoff
             continue
         try:
             payload = resp.json()
+            if not isinstance(payload, dict):
+                raise TypeError
             _emit_usage(cfg, payload)
             msg = payload["choices"][0]["message"]
-            out = (msg.get("content") or "").strip()
-        except (KeyError, IndexError, ValueError) as exc:
-            attempts.append({"restart": restart, "beta": current_beta, "error": str(exc)})
+            if not isinstance(msg, dict):
+                raise TypeError
+            raw_output = msg.get("content")
+            if not isinstance(raw_output, str):
+                raise TypeError
+            out = raw_output.strip()
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+            attempts.append(
+                {
+                    "restart": restart,
+                    "beta": current_beta,
+                    "error": "malformed Fireworks rewrite response; response content was redacted",
+                }
+            )
             current_beta *= bias_backoff
             continue
-        quality = evaluate_candidate(text, out, cfg)
+        try:
+            quality = evaluate_candidate(text, out, cfg)
+        except Exception as exc:
+            attempts.append(
+                {
+                    "restart": restart,
+                    "beta": current_beta,
+                    "error": safe_error("quality evaluation", exc),
+                }
+            )
+            current_beta *= bias_backoff
+            continue
+        public_quality = public_quality_report(quality)
         attempts.append(
-            {"restart": restart, "beta": round(current_beta, 3), "quality": quality.to_dict()}
+            {"restart": restart, "beta": round(current_beta, 3), "quality": public_quality}
         )
         if quality.passed:
             detail.update(
                 attempts=attempts,
                 effective_beta=current_beta,
-                quality=quality.to_dict(),
+                quality=public_quality,
                 tokens_after=len(out.split()),
             )
             return out, detail

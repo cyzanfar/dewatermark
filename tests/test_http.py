@@ -24,7 +24,10 @@ def test_post_json_retries_transient_status(monkeypatch):
         body={},
         timeout=1,
         retries=2,
-        config=DewatermarkConfig(event_handler=events.append),
+        config=DewatermarkConfig(
+            event_handler=events.append,
+            allow_remote_processing=True,
+        ),
         backend="fixture",
     )
     assert response.status_code == 200

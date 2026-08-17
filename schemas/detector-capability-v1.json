@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/detector-capability-v1.json",
+  "title": "DewatermarkDetectorCapability",
+  "type": "object",
+  "required": [
+    "identifier",
+    "kind",
+    "version",
+    "schemes",
+    "network_required",
+    "model_download_possible",
+    "requires_secret",
+    "minimum_characters",
+    "calibrated",
+    "independent",
+    "metadata"
+  ],
+  "properties": {
+    "identifier": {"type": "string", "minLength": 1},
+    "kind": {"const": "detector"},
+    "version": {"type": "string", "minLength": 1},
+    "schemes": {"type": "array", "items": {"type": "string"}},
+    "description": {"type": "string"},
+    "network_required": {"type": "boolean"},
+    "model_download_possible": {"type": "boolean"},
+    "requires_secret": {"type": "boolean"},
+    "minimum_characters": {"type": "integer", "minimum": 0},
+    "calibrated": {"type": "boolean"},
+    "independent": {"type": "boolean"},
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "evidence_level": {
+          "enum": ["none", "artifact", "surrogate", "same_implementation", "independent_detector", "provider_detector"]
+        },
+        "threat_models": {
+          "type": "array",
+          "items": {"enum": ["T0", "T1", "T2", "T3", "T4"]}
+        },
+        "score_direction": {"enum": ["higher", "lower"]},
+        "calibration": {"type": "string"},
+        "source": {"type": "string"},
+        "license": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -2,22 +2,24 @@
 
 dewatermark aims to be the most trustworthy open-source toolkit for inspecting and mitigating text watermark artifacts—not the loudest universal-removal claim.
 
-## Now — v0.4
+## Shipped — v0.5
 
-- Repository scanner, SARIF, pre-commit, and GitHub Action
-- Local HTTP/OpenAPI and MCP servers
-- Private browser playground and published Unicode benchmark
-- Agent skill, container image recipe, and integration examples
+- Detector-scoped assurance receipts and explicit unsupported states
+- Content-bound inspect → plan → apply → verify workflows for agents
+- Bounded independent-detector command adapter and conformance kit
+- Context-aware cross-runtime Unicode policy and reversible scanner fixes
+- Hardened HTTP/MCP transports, release supply chain, and benchmark manifests
 
 ## Next
 
-- More independent detector adapters and reproducible named-scheme benchmarks
-- NLI and claim-preservation quality gates
+- Pinned adapters and reproducible reports for KGW/Unigram, distortion-free,
+  SynthID reference, and semantic watermark families
+- Bidirectional NLI, atomic-claim/QA, citation, and task-specific quality gates
 - Editor plugins and SDK clients generated from OpenAPI
-- Stable plugin conformance suite and benchmark artifact registry
+- Public benchmark artifact registry with blinded review packets
 
 ## Later
 
 - Documentation and SEO site at `llmwatermarkremover.com`
-- Community-maintained detector matrix and research replication reports
-- Signed releases, SBOMs, and provenance attestations
+- Community-maintained detector matrix and independent replication reports
+- Provider-authorized adapters when public technical interfaces become available

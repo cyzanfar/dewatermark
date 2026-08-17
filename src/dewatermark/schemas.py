@@ -1,50 +1,52 @@
-"""Machine-readable public JSON schemas."""
+"""Packaged, machine-readable public JSON schemas."""
 
 from __future__ import annotations
 
+import json
+from importlib.resources import files
+from pathlib import Path
 from typing import Any
+
+_SCHEMA_FILES = {
+    "removal-result": "removal-result-v1.json",
+    "evidence-receipt": "evidence-receipt-v1.json",
+    "detector-capability": "detector-capability-v1.json",
+    "command-detector": "command-detector-protocol-v1.json",
+}
+
+
+def public_schema(name: str) -> dict[str, Any]:
+    """Return one checked-in schema from source or an installed distribution."""
+    try:
+        filename = _SCHEMA_FILES[name]
+    except KeyError:
+        choices = ", ".join(sorted(_SCHEMA_FILES))
+        raise ValueError(f"unknown schema {name!r}; choose one of: {choices}") from None
+    packaged = files("dewatermark").joinpath("data").joinpath("schemas").joinpath(filename)
+    try:
+        payload = packaged.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        # Direct source checkouts use the canonical repository directory. The
+        # build maps that same directory into dewatermark/data/schemas.
+        source = Path(__file__).resolve().parents[2] / "schemas" / filename
+        payload = source.read_text(encoding="utf-8")
+    value = json.loads(payload)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"packaged schema {filename} is not a JSON object")
+    return value
 
 
 def removal_result_schema() -> dict[str, Any]:
-    """Return the removal-result JSON Schema for agent tool registration."""
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/removal-result-v1.json",
-        "title": "DewatermarkRemovalResult",
-        "type": "object",
-        "required": ["schema_version", "cleaned_text", "stages", "report"],
-        "properties": {
-            "schema_version": {"const": "1.0"},
-            "cleaned_text": {"type": "string"},
-            "stages": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["stage", "status", "changed", "accepted", "details"],
-                    "properties": {
-                        "stage": {"type": "string"},
-                        "status": {"enum": ["success", "unchanged", "partial", "failed"]},
-                        "changed": {"type": "boolean"},
-                        "accepted": {"type": "boolean"},
-                        "backend": {"type": ["string", "null"]},
-                        "fallback_reason": {"type": ["string", "null"]},
-                        "warning": {"type": ["string", "null"]},
-                        "error": {"type": ["string", "null"]},
-                        "details": {"type": "object"},
-                    },
-                },
-            },
-            "report": {
-                "type": "object",
-                "required": ["schema_version", "mode", "status", "changed"],
-                "properties": {
-                    "schema_version": {"const": "1.0"},
-                    "mode": {"type": "string"},
-                    "status": {"enum": ["success", "unchanged", "partial", "failed"]},
-                    "changed": {"type": "boolean"},
-                    "metadata": {"type": "object"},
-                },
-            },
-        },
-        "additionalProperties": False,
-    }
+    return public_schema("removal-result")
+
+
+def evidence_receipt_schema() -> dict[str, Any]:
+    return public_schema("evidence-receipt")
+
+
+def detector_capability_schema() -> dict[str, Any]:
+    return public_schema("detector-capability")
+
+
+def command_detector_schema() -> dict[str, Any]:
+    return public_schema("command-detector")

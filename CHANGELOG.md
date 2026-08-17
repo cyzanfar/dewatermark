@@ -1,44 +1,90 @@
 # Changelog
 
-## [Unreleased]
+This project follows Semantic Versioning. Public changes are recorded here.
+
+## [0.5.0] - 2026-08-17
+
+- Serialized removal results now include the content-free evidence receipt as
+  an additive `receipt` field; the object remains available as `result.receipt`.
 
 ### Added
 
-- Repository scanner with JSON, SARIF, explicit fixing, pre-commit, and a GitHub Action.
-- Dependency-free local HTTP/OpenAPI service and optional MCP server.
-- Browser playground, Docker recipe, agent skill, roadmap, citation, and launch kit.
-- Published deterministic Unicode fixture benchmark across five families.
+- Detector-scoped assurance states for detection, transformation, and
+  verification, plus content-free evidence receipts and claim scopes.
+- Content-bound `inspect`, `plan`, `apply`, and `verify` APIs across Python,
+  CLI, HTTP/OpenAPI, and MCP. Plans bind consequential policy and require an
+  exact digest plus explicit transformation consent.
+- A bounded JSON command-detector protocol with static capability manifests,
+  configuration fingerprints, strict response validation, and redacting
+  golden-vector conformance reports.
+- A canonical Unicode policy shared by Python and the browser, contextual
+  dispositions, byte/code-point/grapheme offsets, reversible edit manifests,
+  document-bound edit hashes, and cross-runtime golden tests.
+- Scanner baselines, suppressions, changed-line filtering, atomic fixes,
+  permission/BOM/newline preservation, and SARIF fingerprints.
+- Content-addressed evaluation manifests and checkpoints, held-out calibration,
+  confidence intervals, false-insertion accounting, cross-detector hooks, and
+  explicit offline policy for learned metrics.
+- CI coverage for Python 3.9–3.14, macOS/Windows, MCP, browser parity, optional
+  extras, offline socket denial, installed artifacts, SBOMs, dependency review,
+  audits, CodeQL, and release provenance attestations.
 
 ### Changed
 
-- Repositioned documentation around the accurate term “open-source AI text watermark remover.”
+- Every built-in and provider rewrite now crosses the same whole-document
+  quality gate; protected facts, polarity, code, JSON, Markdown, and document
+  structure receive stronger deterministic checks.
+- Every text-receiving extension—transformer, scorer, quality gate, semantic
+  scorer, chunker, and detector—now requires a static capability manifest and
+  fails closed before construction or text access when its kind, privacy, model,
+  or secret requirements cannot be enforced. Plans ignore extensions that the
+  selected mode cannot execute.
+- Content-bound plans bind extension capability digests, implementation
+  fingerprints, and monotonic registration revisions, rejecting replacement
+  even when self-declared manifest fields remain unchanged.
+- Remote calls, generated tokens, deadlines, cancellation, model access, and
+  batches now use request-scoped limits and privacy-safe accounting.
+- Loopback HTTP processing now requires the same explicit opt-in as every other
+  endpoint; local network placement is not treated as consent.
+- Repository scanning reports only actionable evidence by default; contextual
+  and informational observations are available with `--all-findings`.
+- Anthropic/Claude production marking is represented as
+  `unsupported_pending_spec` until public technical detection guidance exists.
+- The Docker image runs as a non-root user and defaults to local capability
+  output; external server binds require an API key.
 
-This project follows Semantic Versioning and records user-visible changes here.
+### Fixed
 
-## Unreleased
+- Restored Python/browser Unicode-policy parity for emoji, joining controls,
+  variation selectors, bidi text, and byte-order marks.
+- Prevented provider metadata from forging pipeline fields or bypassing central
+  acceptance gates; arbitrary strings, non-finite numbers, and custom gate
+  reasons are redacted from public results.
+- Prevented plans from importing untrusted detector entry points.
+- Prevented generic provider, scorer, and detector factories from receiving
+  application API keys, and removed detector-constructor retry behavior.
+- Replaced the obsolete MCP server integration with the official FastMCP API.
+- Redacted provider bodies, adapter stderr, command arguments, and credentials
+  from public failures and artifacts.
+- Isolated command-detector child environments from ambient credentials and
+  made secret-requiring adapters fail closed because no secret channel exists.
 
-- Polished the README for the public release, including status badges,
-  PyPI-first installation, capability boundaries, and corrected examples and
-  documentation links.
+## [0.4.0] - 2026-08-16
 
-## 0.3.0
+- Added repository scanning, SARIF, pre-commit, a GitHub Action, local
+  HTTP/OpenAPI and MCP surfaces, a browser playground, Docker, an agent skill,
+  and a deterministic five-family Unicode fixture benchmark.
+- Repositioned the project around the accurate term “open-source AI text
+  watermark remover” while documenting statistical and vendor limitations.
 
-- Added a PyPI Trusted Publishing workflow and complete Unicode data licensing
-  notices to the release artifacts.
-- Fixed external evaluation adapter command parsing on Windows.
-- Updated GitHub Actions to their Node.js 24 runtimes.
-- Added versioned typed result models and exception hierarchy.
-- Added provider protocols, registry, and Python entry-point discovery.
-- Added capability discovery, side-effect-free execution plans, events, batch
-  processing, async processing, and model lifecycle controls.
-- Added a JSON/JSONL agent CLI with stable exit codes and explicit downloads.
-- Namespaced environment variables while retaining v0.2 aliases.
-- Packaged the evaluation harness and added strict failures, manifests,
-  checkpoints, resume support, and machine-readable results.
-- Added contributor, security, architecture, extension, compatibility, agent,
-  CI, typing, linting, coverage, and example resources.
+## [0.3.0]
 
-## 0.2.0
+- Added PyPI Trusted Publishing and Unicode data licensing.
+- Added typed result models, provider protocols and entry points, capability
+  planning, events, batches, async processing, model lifecycle controls, an
+  agent CLI, namespaced environment variables, and a packaged evaluator.
 
-- Added safe Unicode profiles, quality-constrained BIRA/SIRA, chunking, remote
-  privacy controls, and empirical matched-null evaluation.
+## [0.2.0]
+
+- Added safe Unicode profiles, quality-constrained BIRA/SIRA proxies, chunking,
+  remote privacy controls, and empirical matched-null evaluation.

@@ -6,7 +6,7 @@ Use these as editable drafts. Participate in each community rather than cross-po
 
 **Title:** Show HN: Dewatermark – inspect hidden Unicode and research LLM text watermarks
 
-I built an MIT-licensed Python toolkit that finds and removes zero-width characters, Unicode tags, variation selectors, exotic spaces, and other text covert channels. It also includes a quality-constrained research harness for published statistical watermark schemes. The useful new pieces are a private browser playground, SARIF repository scanner, pre-commit hook, local HTTP/OpenAPI API, and MCP tools. It deliberately does not claim to remove an undisclosed Claude/vendor watermark. I would especially value feedback on independent detector adapters and benchmark methodology.
+I built an MIT-licensed Python toolkit that finds and removes contextual Unicode covert channels and evaluates named statistical watermark mitigations. The new release separates detection, transformation, and verification; returns content-free evidence receipts; and gives agents a consent-bound inspect → plan → apply → verify workflow over CLI, HTTP/OpenAPI, and MCP. It includes a bounded external-detector protocol, SARIF scanner, pre-commit hook, and private browser playground. Anthropic now confirms Claude marking for supported new models, but its technical detector guidance is forthcoming, so the toolkit explicitly abstains instead of claiming Claude removal. I would especially value independent detector adapters and benchmark replications.
 
 ## Developer communities
 
@@ -16,4 +16,4 @@ I made dewatermark for developers who need to understand suspicious invisible Un
 
 ## Short social post
 
-Released dewatermark v0.4: an open-source AI text watermark remover and research toolkit. Inspect hidden Unicode locally, scan repos with SARIF/pre-commit, call it over Python/CLI/HTTP/MCP, and reproduce named-scheme benchmarks. No universal or vendor-specific magic claims—just inspectable methods and explicit limits.
+Released dewatermark v0.5: an open-source AI text watermark remover and assurance toolkit. Inspect hidden Unicode locally, scan repos with SARIF/pre-commit, connect named independent detectors, and use consent-bound Python/CLI/HTTP/MCP workflows. No universal or vendor-specific magic claims—every outcome says what changed, what was verified, and what remains unknown.

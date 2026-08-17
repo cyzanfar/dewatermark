@@ -4,16 +4,16 @@ extras. No torch/LLM needed."""
 import pytest
 
 import dewatermark
-from dewatermark.unicode import analyze, sanitize
+from dewatermark.unicode import analyze, reverse_edits, sanitize, sanitize_with_edits
 
-ZWSP, CYR_A, CYR_E = "​", "а", "е"
+ZWSP, CYR_A, CYR_E = "\u200b", "\u0430", "\u0435"
 
 
 @pytest.mark.parametrize(
     "dirty,expected",
     [
         (f"he{ZWSP}llo", "hello"),  # zero_width
-        ("a‮b", "ab"),  # bidi
+        ("a\u202eb", "ab"),  # bidi
         ("hi\U000e0041", "hi"),  # tags_block
         ("a b", "a b"),  # nbsp_space
         (f"committ{CYR_E}{CYR_E}", "committee"),  # homoglyph_cyrillic
@@ -35,7 +35,7 @@ def test_non_latin_preserved():
 
 
 def test_reanalyze_zero_flags_after_sanitize():
-    dirty = f"The{ZWSP} quіck brown fox"
+    dirty = f"The{ZWSP} qu\u0456ck brown fox"
     clean, _ = sanitize(dirty, profile="aggressive")
     assert analyze(clean)["unicode"]["total_flags"] == 0
 
@@ -52,7 +52,7 @@ def test_analyze_flags_zwsp():
 
 
 def test_sanitize_idempotent():
-    dirty = f"a{ZWSP}b​c d"
+    dirty = f"a{ZWSP}b\u200bc\u2005d"
     once, _ = sanitize(dirty)
     twice, _ = sanitize(once)
     assert once == twice
@@ -79,10 +79,33 @@ def test_safe_profile_preserves_semantic_unicode():
 
 
 def test_aggressive_profile_is_explicitly_lossy():
-    got, _ = sanitize("Ａ pаypal", profile="aggressive")
+    got, _ = sanitize("Ａ p\u0430ypal", profile="aggressive")
     assert got == "A paypal"
 
 
 def test_invalid_profile_rejected():
     with pytest.raises(ValueError):
         sanitize("text", profile="unknown")
+
+
+@pytest.mark.parametrize("profile", ["safe", "aggressive"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "a\u200bb",
+        "e\u0301",
+        "A\u200be\u0301",
+        "ｆｏｏ",
+        "p\u0430ypal",
+        "👩\u200d💻",
+    ],
+)
+def test_edit_manifest_reverses_every_transformation(profile, source):
+    cleaned, _counts, edits = sanitize_with_edits(source, profile=profile)
+    assert reverse_edits(cleaned, edits) == source
+
+
+def test_edit_manifest_rejects_a_different_cleaned_document():
+    cleaned, _counts, edits = sanitize_with_edits("a\u200bb")
+    with pytest.raises(ValueError, match="does not match"):
+        reverse_edits(cleaned + "changed", edits)

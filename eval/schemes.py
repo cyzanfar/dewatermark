@@ -18,7 +18,10 @@ self-contained CPU harness.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import random
 
 try:
     from . import kgw  # type: ignore
@@ -26,23 +29,80 @@ except ImportError:  # direct ``python eval/run_eval.py`` compatibility
     import kgw  # type: ignore
 
 load_model = kgw.load_model
-generate_plain = lambda prompt, tok, model, n, seed: kgw.generate(  # noqa: E731
-    prompt, tok, model, max_new_tokens=n, watermarked=False, seed=seed
-)
+
+
+def generate_plain(prompt, tok, model, n, seed):
+    seed_everything(seed)
+    return kgw.generate(prompt, tok, model, max_new_tokens=n, watermarked=False, seed=seed)
+
 
 GAMMA = 0.25
 DELTA = 2.0
 UNIGRAM_KEY = 2718281829
 EXP_KEY = 1618033988
-_STRENGTH = {"KGW": DELTA, "Unigram": DELTA}
+EXP_DECODING = {
+    "do_sample": True,
+    "temperature": 0.7,
+    "top_p": 0.95,
+}
+_DEFAULT_STRENGTH = {"KGW": DELTA, "Unigram": DELTA}
+_STRENGTH = dict(_DEFAULT_STRENGTH)
+
+
+def seed_everything(seed: int) -> None:
+    """Seed every RNG used by bundled schemes and request deterministic kernels."""
+    random.seed(seed)
+    try:
+        import numpy
+
+        numpy.random.seed(seed % (2**32))
+    except ImportError:
+        pass
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except ImportError:
+        pass
+
+
+def sample_seed(root_seed: int, *coordinates: object) -> int:
+    """Derive a deterministic 63-bit seed independent of loop ordering.
+
+    A seed is a truncated cryptographic identity, not a counter.  Keeping the
+    high bit clear makes the value portable across RNGs that accept signed
+    64-bit seeds while retaining substantially more collision resistance than
+    the previous 31-bit reduction.
+    """
+    value = json.dumps([root_seed, *coordinates], sort_keys=True, separators=(",", ":"))
+    return int.from_bytes(hashlib.sha256(value.encode()).digest()[:8], "big") & ((1 << 63) - 1)
+
+
+def _configuration_sha256(value: dict) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _key_fingerprint(value: int) -> str:
+    return hashlib.sha256(str(value).encode()).hexdigest()[:16]
 
 
 def _set_strength(name):
     return lambda value: _STRENGTH.__setitem__(name, float(value))
 
 
+def reset_strengths() -> None:
+    """Reset mutable calibration state for deterministic repeated runs."""
+    _STRENGTH.clear()
+    _STRENGTH.update(_DEFAULT_STRENGTH)
+
+
 # --------------------------------------------------------------------------- KGW
 def kgw_generate(prompt, tok, model, n, seed, watermarked=True):
+    seed_everything(seed)
     return kgw.generate(
         prompt,
         tok,
@@ -88,7 +148,7 @@ def unigram_generate(prompt, tok, model, n, seed, watermarked=True):
 
     if not watermarked:
         return generate_plain(prompt, tok, model, n, seed)
-    torch.manual_seed(seed)
+    seed_everything(seed)
     messages = [{"role": "user", "content": prompt}]
     try:
         inputs = tok.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt")
@@ -149,9 +209,7 @@ def exp_generate(prompt, tok, model, n, seed, watermarked=True):
     import torch
     from transformers import LogitsProcessorList
 
-    if not watermarked:
-        return generate_plain(prompt, tok, model, n, seed)
-    torch.manual_seed(seed)
+    seed_everything(seed)
     messages = [{"role": "user", "content": prompt}]
     try:
         inputs = tok.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt")
@@ -159,13 +217,15 @@ def exp_generate(prompt, tok, model, n, seed, watermarked=True):
             inputs = inputs.input_ids
     except Exception:
         inputs = tok(prompt, return_tensors="pt").input_ids
-    lp = LogitsProcessorList([_EXPProcessor()])
+    # The matched plain control follows this exact path with the exact same
+    # decoding arguments.  Presence of the watermark processor is the only
+    # generation-configuration difference between the two conditions.
+    lp = LogitsProcessorList([_EXPProcessor()]) if watermarked else None
     with torch.no_grad():
         out = model.generate(
             inputs,
             max_new_tokens=n,
-            do_sample=True,
-            temperature=1.0,
+            **EXP_DECODING,
             logits_processor=lp,
             pad_token_id=tok.eos_token_id,
         )
@@ -196,6 +256,23 @@ SCHEMES = {
         "source": "internal reference",
         "independent": False,
         "set_strength": _set_strength("KGW"),
+        "manifest": {
+            "schema_version": "1.0",
+            "id": "kgw-left-hash-h1",
+            "family": "context green-list",
+            "source": "https://arxiv.org/abs/2301.10226",
+            "implementation": "bundled-independent-reimplementation",
+            "implementation_version": "1",
+            "independent": False,
+            "vendor_validated": False,
+            "score_direction": "higher",
+            "minimum_tokens": 2,
+            "key_fingerprint": _key_fingerprint(kgw.HASH_KEY),
+            "configuration_sha256": _configuration_sha256(
+                {"gamma": GAMMA, "context_width": 1, "duplicate_bigrams": "ignored"}
+            ),
+            "calibration": {"method": "held-out empirical null", "threshold_operator": ">"},
+        },
     },
     "Unigram": {
         "generate": unigram_generate,
@@ -205,6 +282,21 @@ SCHEMES = {
         "source": "internal reference",
         "independent": False,
         "set_strength": _set_strength("Unigram"),
+        "manifest": {
+            "schema_version": "1.0",
+            "id": "unigram-fixed-greenlist",
+            "family": "fixed green-list",
+            "source": "https://arxiv.org/abs/2306.17439",
+            "implementation": "bundled-independent-reimplementation",
+            "implementation_version": "1",
+            "independent": False,
+            "vendor_validated": False,
+            "score_direction": "higher",
+            "minimum_tokens": 1,
+            "key_fingerprint": _key_fingerprint(UNIGRAM_KEY),
+            "configuration_sha256": _configuration_sha256({"gamma": GAMMA}),
+            "calibration": {"method": "held-out empirical null", "threshold_operator": ">"},
+        },
     },
     "EXP": {
         "generate": exp_generate,
@@ -213,8 +305,36 @@ SCHEMES = {
         "family": "simplified previous-token Gumbel reference",
         "source": "internal approximation",
         "independent": False,
+        "manifest": {
+            "schema_version": "1.0",
+            "id": "exp-prev-token-approximation",
+            "family": "Gumbel distortion-free",
+            "source": "https://arxiv.org/abs/2307.15593",
+            "implementation": "bundled-simplified-approximation",
+            "implementation_version": "1",
+            "independent": False,
+            "vendor_validated": False,
+            "score_direction": "higher",
+            "minimum_tokens": 2,
+            "key_fingerprint": _key_fingerprint(EXP_KEY),
+            "configuration_sha256": _configuration_sha256(
+                {"context_width": 1, "decoding": EXP_DECODING}
+            ),
+            "matched_control": {
+                "generation_arguments": dict(EXP_DECODING),
+                "only_difference": "logits_processor",
+            },
+            "calibration": {"method": "held-out empirical null", "threshold_operator": ">"},
+            "limitations": ["not the official EXP/ITS implementation"],
+        },
     },
 }
+
+
+def scheme_manifests(names: list[str] | None = None) -> dict[str, dict]:
+    """Return static, JSON-safe identities without loading models."""
+    selected = names if names is not None else list(SCHEMES)
+    return {name: dict(SCHEMES[name]["manifest"]) for name in selected}
 
 
 if __name__ == "__main__":

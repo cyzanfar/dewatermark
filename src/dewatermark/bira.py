@@ -19,7 +19,9 @@ from typing import Optional
 from . import scoring
 from .chunking import split_for_config
 from .config import DewatermarkConfig, resolve
+from .prompt_safety import INERT_DATA_INSTRUCTION, inert_block
 from .quality import evaluate_candidate
+from .request_context import checkpoint, current_request_context, safe_error
 
 
 class BIRALogitsProcessor:
@@ -55,7 +57,7 @@ def estimate_green(
 _REWRITE_SYSTEM = (
     "Rewrite the user's text in your own words. Preserve every fact, name, number, "
     "and the overall meaning exactly. Do not add commentary or disclaimers. Output "
-    "only the rewritten text."
+    f"only the rewritten text. {INERT_DATA_INSTRUCTION}"
 )
 
 
@@ -73,6 +75,7 @@ def bira_rewrite(
     Dispatches to the Fireworks API backend when configured (no local model);
     otherwise runs the local transformers path below."""
     cfg = resolve(config)
+    checkpoint()
     chunks = split_for_config(text, cfg)
     if len(chunks) > 1:
         outputs, children = [], []
@@ -82,12 +85,24 @@ def bira_rewrite(
             )
             outputs.append(out)
             children.append(child)
-        return "".join(outputs), {
+        combined = "".join(outputs)
+        detail = {
             "stage": "bias_inversion",
+            "implementation": "bira_proxy",
             "chunked": True,
             "chunks": len(chunks),
             "children": children,
         }
+        failures = sum(bool(child.get("error") or child.get("warning")) for child in children)
+        detail["chunk_failures"] = failures
+        quality = evaluate_candidate(text, combined, cfg)
+        detail["whole_document_quality"] = quality.to_dict()
+        if not quality.passed:
+            detail["warning"] = "combined rewrite failed whole-document quality gates"
+            return text, detail
+        if failures:
+            detail["warning"] = f"{failures} of {len(chunks)} chunks were unchanged or failed"
+        return combined, detail
     if cfg.resolved_lm_backend == "fireworks":
         from . import fireworks
 
@@ -95,7 +110,12 @@ def bira_rewrite(
             text, beta, quantile, cfg, max_restarts=max_restarts, bias_backoff=bias_backoff
         )
 
-    detail = {"stage": "bias_inversion", "beta": beta, "quantile": quantile}
+    detail = {
+        "stage": "bias_inversion",
+        "implementation": "bira_proxy",
+        "beta": beta,
+        "quantile": quantile,
+    }
     try:
         tok, model = scoring.load(cfg)
     except scoring.ScorerUnavailable as exc:
@@ -115,14 +135,14 @@ def bira_rewrite(
 
     messages = [
         {"role": "system", "content": _REWRITE_SYSTEM},
-        {"role": "user", "content": text},
+        {"role": "user", "content": inert_block(text)},
     ]
     try:
         inputs = tok.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt")
         if hasattr(inputs, "input_ids"):
             inputs = inputs.input_ids
     except Exception:
-        inputs = tok(text, return_tensors="pt").input_ids
+        inputs = tok(inert_block(text), return_tensors="pt").input_ids
     inputs = inputs.to(next(model.parameters()).device)
 
     green_t = torch.tensor(green, dtype=torch.long) if green else None
@@ -130,16 +150,21 @@ def bira_rewrite(
     attempts = []
     current_beta = beta
     for restart in range(max(1, max_restarts)):
+        checkpoint()
         lp = (
             LogitsProcessorList([BIRALogitsProcessor(green_t, current_beta)])
             if green_t is not None
             else None
         )
+        context = current_request_context()
+        reserved = budget
         try:
+            if context is not None:
+                reserved = context.reserve_output_tokens(budget)
             with scoring.inference_lock(cfg), torch.no_grad():
                 out = model.generate(
                     inputs,
-                    max_new_tokens=budget,
+                    max_new_tokens=reserved,
                     do_sample=True,
                     temperature=1.0,
                     top_p=0.95,
@@ -147,15 +172,20 @@ def bira_rewrite(
                     pad_token_id=tok.eos_token_id,
                 )
         except Exception as exc:
+            if context is not None:
+                context.reconcile_local_generation(0)
             attempts.append(
                 {
                     "restart": restart,
                     "beta": round(current_beta, 3),
-                    "error": f"generation failed: {exc}",
+                    "error": safe_error("local generation", exc),
                 }
             )
             current_beta *= bias_backoff
             continue
+        generated_tokens = max(0, int(out.shape[-1]) - int(inputs.shape[-1]))
+        if context is not None:
+            context.reconcile_local_generation(generated_tokens)
         rewritten = tok.decode(out[0][inputs.shape[-1] :], skip_special_tokens=True).strip()
         quality = evaluate_candidate(text, rewritten, cfg)
         attempts.append(

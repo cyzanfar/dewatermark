@@ -8,9 +8,11 @@ const findings = document.querySelector("#findings");
 function run() {
   const matches = inspectText(input.value);
   output.value = sanitizeText(input.value);
-  summary.textContent = `${matches.length} suspicious character${matches.length === 1 ? "" : "s"} found. Processing stays in this browser.`;
+  const suspicious = matches.filter((item) => item.disposition !== "informational");
+  const informational = matches.length - suspicious.length;
+  summary.textContent = `${suspicious.length} actionable or contextual character${suspicious.length === 1 ? "" : "s"} found${informational ? `; ${informational} legitimate-context observation${informational === 1 ? "" : "s"} preserved` : ""}. Processing stays in this browser.`;
   findings.innerHTML = matches.length
-    ? matches.map((item) => `<li><code>${item.codepoint}</code> at index ${item.index} — ${item.label}</li>`).join("")
+    ? matches.map((item) => `<li><code>${item.codepoint}</code> at code-point index ${item.index} — ${item.label} (${item.disposition}): ${item.context}</li>`).join("")
     : "<li>No suspicious Unicode found.</li>";
 }
 

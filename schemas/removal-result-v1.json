@@ -33,9 +33,35 @@
         "mode": {"type": "string"},
         "status": {"enum": ["success", "unchanged", "partial", "failed"]},
         "changed": {"type": "boolean"},
+        "detection_status": {
+          "enum": [
+            "detected",
+            "not_detected",
+            "insufficient_evidence",
+            "unsupported",
+            "configuration_mismatch",
+            "detector_error"
+          ]
+        },
+        "transformation_status": {
+          "enum": [
+            "unchanged",
+            "unicode_sanitized",
+            "mitigation_verified",
+            "mitigation_unverified",
+            "rejected_quality",
+            "unsupported_scheme",
+            "failed"
+          ]
+        },
+        "verification_status": {
+          "enum": ["verified_cleared", "residual", "not_verifiable", "failed"]
+        },
+        "detector": {"type": ["string", "null"]},
         "metadata": {"type": "object"}
       }
-    }
+    },
+    "receipt": {"type": ["object", "null"]}
   },
   "additionalProperties": false
 }

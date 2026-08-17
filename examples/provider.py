@@ -1,9 +1,16 @@
 """Minimal third-party rewriter provider."""
 
-from dewatermark import DewatermarkConfig, register_provider, remove
+from dewatermark import CapabilityManifest, DewatermarkConfig, register_provider, remove
 
 
 class ExampleRewriter:
+    capability = CapabilityManifest(
+        identifier="example-rewriter",
+        kind="transformer",
+        version="1.0.0",
+        schemes=("example",),
+    )
+
     def __init__(self, _config):
         pass
 

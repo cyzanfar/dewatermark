@@ -7,7 +7,7 @@
   <meta name="keywords" content="text watermark remover, AI watermark remover, LLM watermark remover, Unicode watermark detector">
   <meta property="og:title" content="dewatermark — open-source AI text watermark remover"><meta property="og:description" content="Find and remove hidden Unicode artifacts locally. No text leaves your browser.">
   <link rel="canonical" href="https://cyzanfar.github.io/text-watermark-remover/"><link rel="stylesheet" href="styles.css">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"dewatermark","applicationCategory":"DeveloperApplication","operatingSystem":"Any","isAccessibleForFree":true,"codeRepository":"https://github.com/cyzanfar/text-watermark-remover","description":"Open-source AI text watermark remover for Unicode artifacts and published statistical LLM watermarks."}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"dewatermark","applicationCategory":"DeveloperApplication","operatingSystem":"Any","isAccessibleForFree":true,"codeRepository":"https://github.com/cyzanfar/text-watermark-remover","description":"AI text watermark remover for Unicode artifacts, with detector-backed evaluation of statistical LLM watermarks."}</script>
 </head>
 <body><main>
   <p class="eyebrow">Open source · local first · agent ready</p>
@@ -15,6 +15,6 @@
   <p class="lead">A free, private Unicode watermark inspector powered by <strong>dewatermark</strong>. The browser tool uses deterministic safe cleanup; the Python package adds forensic reports, repository scanning, and quality-constrained statistical mitigation.</p>
   <div class="actions"><button class="primary" id="sample">Load hidden sample</button><a class="button" href="https://github.com/cyzanfar/text-watermark-remover">View on GitHub ↗</a><a class="button" href="https://pypi.org/project/dewatermark/">pip install dewatermark ↗</a></div>
   <div class="grid"><section><label for="input">Input</label><textarea id="input" placeholder="Paste text here…"></textarea><button id="clean">Inspect and clean</button></section><section><label for="output">Clean output</label><textarea id="output" readonly></textarea><button id="copy">Copy result</button></section></div>
-  <section style="margin-top:1rem"><p id="summary"></p><ul id="findings"></ul><p class="note">Scope: deterministic Unicode artifacts only. This page does not claim to detect or remove undisclosed vendor watermarks or statistical schemes.</p></section>
+  <section style="margin-top:1rem"><p id="summary"></p><ul id="findings"></ul><p class="note">Scope: deterministic Unicode artifacts only. This page does not claim to detect or remove private vendor marks—including Claude's confirmed but not yet technically documented text marking—or statistical schemes.</p></section>
   <footer>MIT licensed · Your text never leaves this page · <a href="https://github.com/cyzanfar/text-watermark-remover/security">Security</a></footer>
 </main><script type="module" src="app.js"></script></body></html>

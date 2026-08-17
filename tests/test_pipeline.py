@@ -19,17 +19,18 @@ def _reset_module_config():
 
 
 def test_remove_sanitize_mode_strips_zwsp():
-    result = dewatermark.remove("he​llo", mode="sanitize", config=OFFLINE)
+    result = dewatermark.remove("he\u200bllo", mode="sanitize", config=OFFLINE)
     assert isinstance(result, RemovalResult)
     assert result.cleaned_text == "hello"
     assert result.report["chars_removed"] == 1
     assert result.stages[0]["stage"] == "sanitize"
     d = result.to_dict()
     assert d["cleaned_text"] == "hello" and "report" in d and "stages" in d
+    assert d["receipt"] == result.receipt.to_dict()
 
 
 def test_auto_degrades_to_sanitize_only():
-    result = dewatermark.remove("The​ quick brown fox.", mode="auto", config=OFFLINE)
+    result = dewatermark.remove("The\u200b quick brown fox.", mode="auto", config=OFFLINE)
     assert result.cleaned_text == "The quick brown fox."
     assert result.report["auto_selected"] == "sanitize_only"
     assert result.stages[-1]["stage"] == "verify"
@@ -93,8 +94,8 @@ def test_configure_and_reset_roundtrip(monkeypatch):
 
 def test_dewatermark_class_threads_config():
     dw = dewatermark.Dewatermark(OFFLINE)
-    assert dw.sanitize("a​b") == "ab"
-    result = dw.remove("a​b", mode="auto")
+    assert dw.sanitize("a\u200bb") == "ab"
+    result = dw.remove("a\u200bb", mode="auto")
     assert result.report["auto_selected"] == "sanitize_only"
-    assert dw.analyze("a​b")["unicode"]["total_flags"] == 1
+    assert dw.analyze("a\u200bb")["unicode"]["total_flags"] == 1
     assert dw.surrogate_score("text")["available"] is False

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/evidence-receipt-v1.json",
+  "title": "DewatermarkEvidenceReceipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "input_sha256",
+    "output_sha256",
+    "mode",
+    "detection",
+    "transformation",
+    "verification",
+    "changed",
+    "quality",
+    "resources",
+    "provenance",
+    "policy",
+    "warnings",
+    "claim_scope"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "output_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "mode": {
+      "enum": ["auto", "sanitize", "paraphrase", "full", "sira", "bias_inversion", "adversarial"]
+    },
+    "detection": {
+      "enum": [
+        "detected",
+        "not_detected",
+        "insufficient_evidence",
+        "unsupported",
+        "configuration_mismatch",
+        "detector_error"
+      ]
+    },
+    "transformation": {
+      "enum": [
+        "unchanged",
+        "unicode_sanitized",
+        "mitigation_verified",
+        "mitigation_unverified",
+        "rejected_quality",
+        "unsupported_scheme",
+        "failed"
+      ]
+    },
+    "verification": {
+      "enum": ["verified_cleared", "residual", "not_verifiable", "failed"]
+    },
+    "changed": {"type": "boolean"},
+    "detector": {"type": ["string", "null"]},
+    "detector_before": {"$ref": "#/$defs/detectionEvidence"},
+    "detector_after": {"$ref": "#/$defs/detectionEvidence"},
+    "quality": {"type": "object"},
+    "resources": {"type": "object"},
+    "provenance": {
+      "type": "object",
+      "required": [
+        "package_version",
+        "transform_revision",
+        "unicode_policy_version",
+        "random_seed",
+        "config_sha256",
+        "detector_capability",
+        "model_identifiers"
+      ],
+      "properties": {
+        "package_version": {"type": "string"},
+        "transform_revision": {"type": "string"},
+        "unicode_policy_version": {"type": "string"},
+        "random_seed": {"type": "integer", "minimum": 0},
+        "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "detector_capability": {"type": "object"},
+        "model_identifiers": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "policy": {"type": "object"},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "claim_scope": {"type": "string"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "detectionEvidence": {
+      "type": "object",
+      "required": ["schema_version", "detector", "status", "text_characters", "details"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "detector": {"type": "string"},
+        "status": {
+          "enum": [
+            "detected",
+            "not_detected",
+            "insufficient_evidence",
+            "unsupported",
+            "configuration_mismatch",
+            "detector_error"
+          ]
+        },
+        "scheme": {"type": ["string", "null"]},
+        "score": {"type": ["number", "null"]},
+        "threshold": {"type": ["number", "null"]},
+        "text_characters": {"type": "integer", "minimum": 0},
+        "reason": {"type": ["string", "null"]},
+        "details": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

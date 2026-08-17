@@ -7,8 +7,14 @@ from typing import Optional
 
 import requests
 
-from .config import DewatermarkConfig
+from .config import DewatermarkConfig, assert_remote_allowed
+from .exceptions import BackendUnavailableError
+from .request_context import current_request_context
 from .runtime import emit
+
+
+class HTTPTransportError(BackendUnavailableError):
+    """A bounded remote request failed without retaining request/response data."""
 
 
 def post_json(
@@ -21,15 +27,28 @@ def post_json(
     config: Optional[DewatermarkConfig] = None,
     backend: str = "remote",
 ):
-    last_error: requests.RequestException | None = None
+    effective_config = config or DewatermarkConfig()
+    assert_remote_allowed(url, effective_config)
+    failed = False
     for attempt in range(retries + 1):
         started = time.monotonic()
+        context = current_request_context()
+        effective_timeout: float = timeout
+        if context is not None:
+            context.before_remote_call(url, backend, body)
+            effective_timeout = context.remaining_seconds(float(timeout))
         if config:
             emit(config, "http.request.started", backend=backend, attempt=attempt + 1)
         try:
             response = requests.post(
-                url, headers=headers, json=body, timeout=timeout, allow_redirects=False
+                url,
+                headers=headers,
+                json=body,
+                timeout=effective_timeout,
+                allow_redirects=False,
             )
+            if context is not None and response.status_code >= 400:
+                context.release_latest_output_reservation()
             if response.status_code not in (408, 429) and response.status_code < 500:
                 if config:
                     emit(
@@ -41,14 +60,20 @@ def post_json(
                         latency_ms=round((time.monotonic() - started) * 1000, 3),
                     )
                 return response
-            last_error = requests.HTTPError(
-                f"retryable HTTP {response.status_code}", response=response
-            )
-        except requests.RequestException as exc:
-            last_error = exc
+            failed = True
+        except requests.RequestException:
+            failed = True
+            if context is not None:
+                context.release_latest_output_reservation()
         if attempt < retries:
             if config:
                 emit(config, "http.request.retry", backend=backend, attempt=attempt + 1)
-            time.sleep(min(2.0, 0.25 * (2**attempt)))
-    assert last_error is not None
-    raise last_error
+            delay = min(2.0, 0.25 * (2**attempt))
+            if context is not None:
+                delay = min(delay, context.remaining_seconds())
+            time.sleep(delay)
+    if not failed:  # defensive: the loop always returns or records a failure
+        raise HTTPTransportError("remote request did not complete") from None
+    raise HTTPTransportError(
+        "remote request failed after bounded retries; details redacted"
+    ) from None

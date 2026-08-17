@@ -1,5 +1,6 @@
 from dewatermark.chunking import chunk_text, split_for_config
 from dewatermark.config import DewatermarkConfig
+from dewatermark.models import CapabilityManifest
 from dewatermark.quality import (
     QualityReport,
     distinct_1_ratio,
@@ -33,10 +34,16 @@ def test_quality_rejects_placeholder_and_repetition():
 
 
 def test_optional_semantic_gate():
+    class Semantic:
+        capability = CapabilityManifest(identifier="test-semantic", kind="semantic_scorer")
+
+        def __call__(self, _source, _candidate):
+            return 0.2
+
     report = evaluate_quality(
         "alpha beta gamma",
         "one two three",
-        semantic_scorer=lambda _a, _b: 0.2,
+        semantic_scorer=Semantic(),
         min_semantic_score=0.8,
     )
     assert not report.passed
@@ -53,13 +60,28 @@ def test_chunking_preserves_text_exactly():
 
 def test_injected_quality_gate_and_chunker():
     class Gate:
+        capability = CapabilityManifest(identifier="test-gate", kind="quality_gate")
+
         def evaluate(self, _source, _candidate):
             return QualityReport(True, 1.0, 1.0)
 
     class Chunker:
+        capability = CapabilityManifest(identifier="test-chunker", kind="chunker")
+
         def split(self, text, _max_chars):
             return [text[:2], text[2:]]
 
     cfg = DewatermarkConfig(quality_gate=Gate(), chunker=Chunker())
     assert evaluate_candidate("a", "completely different", cfg).passed
     assert split_for_config("abcd", cfg) == ["ab", "cd"]
+
+
+def test_fenced_code_and_markdown_structure_are_protected():
+    source = "# Title\n\n- one\n- two\n\n```python\nprint('safe')\n```\n"
+    changed_code = "# Title\n\n- one\n- two\n\n```python\nprint('unsafe')\n```\n"
+    assert "fenced code blocks changed" in evaluate_quality(source, changed_code).structure_errors
+
+    changed_list = "## Title\n\n1. one\n2. two\n\n```python\nprint('safe')\n```\n"
+    report = evaluate_quality(source, changed_list)
+    assert "Markdown heading structure changed" in report.structure_errors
+    assert "Markdown list structure changed" in report.structure_errors

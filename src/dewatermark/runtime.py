@@ -8,7 +8,15 @@ from typing import Any, Optional
 
 from .config import DewatermarkConfig, assert_remote_allowed, resolve
 from .models import SCHEMA_VERSION, ExecutionPlan, RemovalMode
-from .providers import list_providers, provider_errors
+from .providers import (
+    detector_errors,
+    detector_manifest,
+    list_detectors,
+    list_providers,
+    provider_errors,
+    provider_manifest,
+)
+from .request_context import current_request_context
 from .scoring import cache_info, model_cached
 
 logger = logging.getLogger(__name__)
@@ -21,11 +29,18 @@ def _paraphrase_calls(passes: int) -> int:
 
 def emit(config: DewatermarkConfig, event: str, **payload: Any) -> None:
     """Deliver a metadata-only event; source text is never included."""
+    context = current_request_context()
+    if context is not None and event == "provider.usage":
+        context.record_usage(payload)
     if config.event_handler:
         try:
             config.event_handler({"event": event, "schema_version": SCHEMA_VERSION, **payload})
         except Exception as exc:
-            logger.warning("dewatermark event handler failed for %s: %s", event, exc)
+            logger.warning(
+                "dewatermark event handler failed for %s (%s); details redacted",
+                event,
+                type(exc).__name__,
+            )
 
 
 def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
@@ -40,6 +55,40 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
         remote_allowed = True
     except PermissionError:
         pass
+    detector_capabilities = []
+    for name in list_detectors():
+        manifest = detector_manifest(name)
+        detector_capabilities.append(
+            {
+                "registered_name": name,
+                **(
+                    manifest.to_dict()
+                    if manifest is not None
+                    else {
+                        "identifier": name,
+                        "kind": "detector",
+                        "status": "entry_point_not_loaded",
+                    }
+                ),
+            }
+        )
+    provider_capabilities = []
+    for name in list_providers():
+        manifest = provider_manifest(name)
+        provider_capabilities.append(
+            {
+                "registered_name": name,
+                **(
+                    manifest.to_dict()
+                    if manifest is not None
+                    else {
+                        "identifier": name,
+                        "kind": "transformer",
+                        "status": "entry_point_not_loaded_or_manifest_missing",
+                    }
+                ),
+            }
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "unicode": True,
@@ -53,7 +102,43 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
         "fireworks_configured": bool(cfg.fireworks_api_key),
         "resolved_backend": cfg.resolved_lm_backend,
         "provider_plugins": list(list_providers()),
+        "provider_capabilities": provider_capabilities,
         "provider_errors": provider_errors(),
+        "detector_plugins": list(list_detectors()),
+        "detector_capabilities": detector_capabilities,
+        "detector_errors": detector_errors(),
+        "assurance": {
+            "operations": ["inspect", "plan", "apply", "verify"],
+            "detection_states": [
+                "detected",
+                "not_detected",
+                "insufficient_evidence",
+                "unsupported",
+                "configuration_mismatch",
+                "detector_error",
+            ],
+            "transformation_states": [
+                "unchanged",
+                "unicode_sanitized",
+                "mitigation_verified",
+                "mitigation_unverified",
+                "unsupported_scheme",
+                "rejected_quality",
+                "failed",
+            ],
+            "verification_states": [
+                "verified_cleared",
+                "residual",
+                "not_verifiable",
+                "failed",
+            ],
+            "schemas": [
+                "removal-result",
+                "evidence-receipt",
+                "detector-capability",
+                "command-detector",
+            ],
+        },
         "modes": [
             "auto",
             "sanitize",
@@ -83,14 +168,29 @@ def plan(
     if mode == "sanitize":
         return ExecutionPlan(mode, "unicode", False, False, True, limits=limits)
     if cfg.rewriter_provider:
-        available = cfg.rewriter_provider in list_providers()
+        manifest = provider_manifest(cfg.rewriter_provider)
+        if manifest is None:
+            return ExecutionPlan(
+                mode,
+                cfg.rewriter_provider,
+                True,
+                True,
+                False,
+                "provider requires an already-loaded static transformer manifest",
+                limits=limits,
+            )
+        permission_ready = (
+            (not manifest.network_required or cfg.allow_remote_processing)
+            and (not manifest.model_download_possible or cfg.allow_model_download)
+            and not manifest.requires_secret
+        )
         return ExecutionPlan(
             mode,
             cfg.rewriter_provider,
-            False,
-            False,
-            available,
-            None if available else "provider is not installed",
+            manifest.network_required,
+            manifest.model_download_possible,
+            permission_ready,
+            None if permission_ready else "provider requirements are not explicitly permitted",
             limits=limits,
         )
     if cfg.resolved_lm_backend == "fireworks":
@@ -120,9 +220,15 @@ def plan(
         )
     deps = bool(find_spec("torch") and find_spec("transformers"))
     local_usable = deps and (cfg.allow_model_download or model_cached(cfg.local_lm))
-    scorer_usable = local_usable or bool(
-        cfg.scorer_provider and cfg.scorer_provider in list_providers()
-    )
+    scorer_usable = local_usable
+    if cfg.scorer_provider:
+        scorer_manifest = provider_manifest(cfg.scorer_provider, kind="scorer")
+        scorer_usable = bool(
+            scorer_manifest
+            and (not scorer_manifest.network_required or cfg.allow_remote_processing)
+            and (not scorer_manifest.model_download_possible or cfg.allow_model_download)
+            and not scorer_manifest.requires_secret
+        )
     llm_allowed = False
     try:
         assert_remote_allowed(cfg.llm_base_url, cfg)

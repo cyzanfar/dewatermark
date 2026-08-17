@@ -4,6 +4,7 @@ import pytest
 
 from dewatermark import bira, fireworks, paraphraser, scoring
 from dewatermark.config import DewatermarkConfig
+from dewatermark.models import CapabilityManifest
 from dewatermark.providers import register_provider, unregister_provider
 
 
@@ -22,6 +23,7 @@ LOCAL_REMOTE = DewatermarkConfig(
     fireworks_api_key="secret",
     fireworks_base_url="http://127.0.0.1:8080/v1",
     lm_backend="fireworks",
+    allow_remote_processing=True,
 )
 
 
@@ -66,7 +68,11 @@ def test_fireworks_chat_and_bira(monkeypatch):
 def test_paraphraser_chat_and_recursive_quality(monkeypatch):
     with pytest.raises(paraphraser.LLMError):
         paraphraser.chat("system", "text", 1.0, config=DewatermarkConfig())
-    cfg = DewatermarkConfig(llm_api_key="secret", llm_base_url="http://127.0.0.1:8080/v1")
+    cfg = DewatermarkConfig(
+        llm_api_key="secret",
+        llm_base_url="http://127.0.0.1:8080/v1",
+        allow_remote_processing=True,
+    )
     response = Response({"choices": [{"message": {"content": "Facts remain exactly here."}}]})
     monkeypatch.setattr(paraphraser, "post_json", lambda *_args, **_kwargs: response)
     assert paraphraser.chat("system", "Facts stay exactly here.", 1.0, config=cfg)
@@ -77,7 +83,12 @@ def test_paraphraser_chat_and_recursive_quality(monkeypatch):
 
 
 def test_remote_call_budget_and_unavailable_local_bira():
-    cfg = DewatermarkConfig(llm_api_key="x", llm_base_url="http://127.0.0.1:1", max_remote_calls=1)
+    cfg = DewatermarkConfig(
+        llm_api_key="x",
+        llm_base_url="http://127.0.0.1:1",
+        allow_remote_processing=True,
+        max_remote_calls=1,
+    )
     output, stages = paraphraser.recursive_paraphrase("Source text remains.", 2, cfg)
     assert output == "Source text remains."
     assert "exceed budget" in stages[0]["error"]
@@ -90,6 +101,12 @@ def test_remote_call_budget_and_unavailable_local_bira():
 
 def test_custom_scorer_provider_and_cache_helpers(tmp_path):
     class CustomScorer:
+        capability = CapabilityManifest(
+            identifier="custom-scorer",
+            kind="scorer",
+            schemes=("surprisal",),
+        )
+
         def __init__(self, _config):
             pass
 

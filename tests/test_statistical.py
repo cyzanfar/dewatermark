@@ -1,3 +1,5 @@
+import pytest
+
 from dewatermark import sira
 from dewatermark.config import DewatermarkConfig, assert_remote_allowed
 
@@ -41,7 +43,10 @@ def test_sira_uses_reference_and_quality_gate(monkeypatch):
 
     monkeypatch.setattr(sira, "chat", fake_chat)
     cfg = DewatermarkConfig(
-        local_lm_enabled=False, llm_api_key="x", llm_base_url="http://127.0.0.1:9999"
+        local_lm_enabled=False,
+        llm_api_key="x",
+        llm_base_url="http://127.0.0.1:9999",
+        allow_remote_processing=True,
     )
     out, detail = sira.sira_rewrite(text, 0.3, cfg)
     assert out == text
@@ -57,7 +62,9 @@ def test_remote_processing_requires_opt_in():
         pass
     else:
         raise AssertionError("remote URL should require consent")
-    assert_remote_allowed("http://127.0.0.1:8000", cfg)
+    with pytest.raises(PermissionError):
+        assert_remote_allowed("http://127.0.0.1:8000", cfg)
+    assert_remote_allowed("http://127.0.0.1:8000", DewatermarkConfig(allow_remote_processing=True))
 
 
 def test_non_http_endpoint_is_always_rejected():

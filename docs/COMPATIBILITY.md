@@ -2,13 +2,22 @@
 
 The project uses Semantic Versioning. Public names exported from
 `dewatermark.__all__`, CLI subcommands, provider protocols, exit codes, and
-schema-major `1` fields are stable for the 0.3 line. Experimental mechanism
+schema-major `1` fields are stable for the 0.x line. Experimental mechanism
 internals and `eval` implementation details are not stable.
 
 Deprecations remain available for at least one minor release. The unprefixed
-v0.2 environment variables remain aliases during 0.3; new integrations should
+v0.2 environment variables remain compatibility aliases; new integrations should
 use `DEWATERMARK_*` names. Python versions are supported from 3.9 through the
 latest version validated in CI.
 
-Provider protocol additions will be optional within a minor release. Required
-method changes or removal of result fields require a major release.
+Provider method additions remain optional within a minor release when they do
+not affect safety. Since 0.5, every extension that can receive text must expose
+a static capability manifest; manifest-less extensions fail closed before
+construction. Removal or reinterpretation of result fields requires a major
+schema version.
+
+The removal-result `1.0`, evidence-receipt `1.0`, detector-capability `1.0`, and
+command-detector protocol `1.0` schemas are versioned independently. Additive
+optional fields may appear within schema major 1; existing fields are not
+removed or reinterpreted. A command adapter with an incompatible protocol major
+is rejected before its result can become evidence.

@@ -3,43 +3,222 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
 jobs:
   test:
+    name: Python ${{ matrix.python }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest --cov=dewatermark --cov-report=term-missing
+
+  platform:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        python: ["3.9", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest
+
+  quality:
+    name: Static checks and examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
       - run: ruff check src tests eval
       - run: ruff format --check src tests eval
       - run: mypy src/dewatermark
       - run: python examples/offline.py
       - run: python examples/batch_async.py
       - run: python examples/provider.py
+      - name: Dogfood the actionable Unicode scanner
+        run: >-
+          dewatermark check src tests eval docs examples web
+          README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md
 
-  package:
+  browser-policy:
+    name: Browser/Python policy parity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: python -m pip install build twine
+          cache: pip
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: python -m pip install -e ".[dev]"
+      - name: Verify generated browser policy is current
+        run: |
+          node web/generate-policy.mjs > generated-unicode-policy.mjs
+          git diff --no-index --exit-code web/unicode-policy.mjs generated-unicode-policy.mjs
+      - run: python -m pytest tests/test_unicode_cross_runtime.py
+
+  no-network:
+    name: Offline-by-default test enforcement
+    runs-on: ubuntu-latest
+    env:
+      HF_HUB_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]" pytest-socket
+      - name: Deny non-loopback sockets during tests
+        run: >-
+          python -m pytest --disable-socket
+          --allow-hosts=127.0.0.1,localhost,::1
+
+  agents:
+    name: Agent transport / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[dev,agents]"
+      - run: python -m pip check
+      - run: python -m pytest tests/test_mcp_server.py
+
+  optional-extras:
+    name: Extra ${{ matrix.extra }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - extra: local
+            python: "3.10"
+          - extra: local
+            python: "3.13"
+          - extra: eval
+            python: "3.12"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[${{ matrix.extra }}]"
+      - run: python -m pip check
+      - if: matrix.extra == 'local'
+        run: python -c "import torch, transformers; import dewatermark.scoring"
+      - if: matrix.extra == 'eval'
+        run: python -c "import bert_score, mauve, sentence_transformers; import dewatermark_eval.metrics"
+
+  package:
+    name: Build and inspect distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install build twine pytest
       - run: python -m build
       - run: python -m twine check dist/*
-      - run: python -m pip install --force-reinstall dist/*.whl
-      - run: dewatermark capabilities
-      - run: dewatermark-eval --skip-statistical --output /tmp/results.md
+      - name: Validate wheel and sdist contents
+        env:
+          DEWATERMARK_DIST_DIR: dist
+        run: python -m pytest tests/test_distribution_artifacts.py
+      - name: Install and smoke-test the wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python -m pip check
+          python -I -c "import dewatermark, dewatermark_eval; from importlib.resources import files; assert files('dewatermark').joinpath('skills/remove-text-watermarks/SKILL.md').is_file()"
+          dewatermark capabilities
+          dewatermark-eval --skip-statistical --output ${{ runner.temp }}/results.md
+      - name: Prepare SBOM output
+        run: mkdir -p attestations
+      - name: Generate distribution SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: attestations/dewatermark.spdx.json
+          upload-artifact: false
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-candidate
+          path: |
+            dist/
+            attestations/
+          if-no-files-found: error
+          retention-days: 7
+
+  container:
+    name: Build and smoke-test container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: docker build --tag dewatermark:test .
+      - run: docker run --rm dewatermark:test capabilities
+      - name: Verify non-root runtime user
+        run: test "$(docker image inspect --format '{{.Config.User}}' dewatermark:test)" = dewatermark

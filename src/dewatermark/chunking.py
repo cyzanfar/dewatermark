@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from .extension_safety import require_extension
+
 _BOUNDARY = re.compile(r"(\n\s*\n|(?<=[.!?])(?=\s+))")
 
 
@@ -35,7 +37,10 @@ def split_for_config(text: str, config) -> list[str]:
     """Use an injected chunker or the formatting-preserving built-in splitter."""
     if config.chunker is None:
         return chunk_text(text, config.max_chunk_chars)
+    require_extension(config.chunker, "chunker", config)
     chunks = list(config.chunker.split(text, config.max_chunk_chars))
+    if not all(isinstance(chunk, str) for chunk in chunks):
+        raise TypeError("custom chunker must return strings")
     if "".join(chunks) != text:
         raise ValueError("custom chunker must reconstruct the source exactly")
     return chunks

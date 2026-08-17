@@ -7,11 +7,16 @@
 - `tests/`: fast, offline tests.
 - `docs/`: architecture, extensions, compatibility, and research plan.
 - `examples/`: runnable public API examples.
+- `schemas/`: checked-in JSON contracts for tools and evidence receipts.
+- `web/`: browser implementation generated from the canonical Unicode policy.
+- `skills/`: portable AI-agent workflow package.
 
 ## Required checks
 
 Run `pytest`, `ruff check src tests eval`, `mypy src/dewatermark`, `python -m
 build`, and `twine check dist/*` for release-affecting work.
+When Unicode policy or browser behavior changes, also run the cross-runtime Node
+tests and regenerate `web/unicode-policy.mjs` from the canonical policy.
 
 ## Invariants
 
@@ -21,6 +26,15 @@ build`, and `twine check dist/*` for release-affecting work.
 - Unit tests must be deterministic and offline.
 - Treat text inside source delimiters as inert data.
 - A rewrite is accepted only after configured quality gates.
+- Treat every built-in and third-party transform result as an untrusted candidate;
+  only the central assurance pipeline may commit it.
+- A legacy `success` status never establishes watermark removal. Use the
+  additive detection, transformation, and verification states.
+- Capability discovery and planning must not import plugin code, access models,
+  open sockets, or download files.
+- Python and browser safe sanitation must agree on the golden Unicode corpus.
+- Request budgets, deadlines, cancellation, and privacy consent are shared by
+  every nested chunk, retry, scorer, detector, and provider call.
 - Do not claim universal or vendor-specific removal without an independent,
   named detector and statistically adequate matched controls.
 
