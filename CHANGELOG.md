@@ -4,6 +4,10 @@ This project follows Semantic Versioning and records user-visible changes here.
 
 ## Unreleased
 
+- Polished the README for the public release, including status badges,
+  PyPI-first installation, capability boundaries, and corrected examples and
+  documentation links.
+
 ## 0.3.0
 
 - Added a PyPI Trusted Publishing workflow and complete Unicode data licensing

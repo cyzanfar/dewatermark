@@ -1,5 +1,10 @@
 # dewatermark
 
+[![PyPI version](https://img.shields.io/pypi/v/dewatermark.svg)](https://pypi.org/project/dewatermark/)
+[![Python versions](https://img.shields.io/pypi/pyversions/dewatermark.svg)](https://pypi.org/project/dewatermark/)
+[![CI](https://github.com/cyzanfar/dewatermark/actions/workflows/ci.yml/badge.svg)](https://github.com/cyzanfar/dewatermark/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Remove Unicode text watermarks and mitigate published statistical LLM
 watermarks with quality-constrained rewriting.
 
@@ -8,15 +13,24 @@ has not publicly documented a deployed Claude text-watermark scheme or detector.
 Unknown vendor systems, provider-side retrieval, and semantic provenance may
 remain detectable after rewriting.
 
+## What it does
+
+- Removes unambiguous zero-width, tag-block, variation-selector, and exotic-space
+  covert channels with a deterministic safe profile.
+- Offers explicitly lossy compatibility and cross-script confusable folding for
+  Latin-oriented text through the aggressive profile.
+- Mitigates published statistical watermark families through local or explicitly
+  authorized remote rewriting, with deterministic quality gates and fallbacks.
+- Provides forensic analysis, dry-run planning, batch and async APIs, a provider
+  extension system, and a matched-control evaluation harness.
+
+Unicode cleanup is deterministic. Statistical mitigation depends on the named
+scheme, detector, model, configuration, text length, and quality constraint.
+
 ## Install
 
-Install the latest development version directly from GitHub:
-
-```bash
-pip install "git+https://github.com/cyzanfar/dewatermark.git"
-```
-
-For published releases:
+The current stable release is
+[v0.3.0](https://github.com/cyzanfar/dewatermark/releases/tag/v0.3.0):
 
 ```bash
 pip install dewatermark
@@ -24,14 +38,23 @@ pip install "dewatermark[local]"   # local self-information scorer + BIRA
 pip install "dewatermark[eval]"    # evaluation models
 ```
 
+Install the latest development version from `main` only when you need unreleased
+changes:
+
+```bash
+pip install "git+https://github.com/cyzanfar/dewatermark.git"
+```
+
 ## Quickstart
 
 ```python
 import dewatermark
 
+text = "he\u200bllo"
+
 # Safe by default: removes unambiguous covert controls without folding valid
 # emoji shaping, RTL controls, compatibility characters, or confusables.
-clean = dewatermark.sanitize("he\u200bllo")
+clean = dewatermark.sanitize(text)
 forensics = dewatermark.analyze(text)
 
 result = dewatermark.remove(text, mode="auto")
@@ -148,10 +171,11 @@ DEWATERMARK_ALLOW_REMOTE_PROCESSING=true dewatermark-eval \
   --json-output results.json --checkpoint progress.jsonl
 ```
 
-The checked-in `eval/RESULTS.md` explains why no statistically valid v0.2
-efficacy result is currently claimed. The runner uses strict failure handling by
-default and records configuration, package versions, hardware, prompt hashes,
-checkpoints, and machine-readable results.
+The [evaluation guide](eval/README.md) and
+[research plan](docs/STEP_FUNCTION_PLAN.md) explain the evidence requirements and
+why no universal efficacy result is claimed. The runner uses strict failure
+handling by default and records configuration, package versions, hardware,
+prompt hashes, checkpoints, and machine-readable results.
 
 ## Extending and contributing
 
