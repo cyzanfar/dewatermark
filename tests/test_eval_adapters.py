@@ -1,7 +1,7 @@
 import sys
 from argparse import Namespace
 
-from adapters import CommandScheme
+from adapters import CommandScheme, _split_command
 from manifest import append_checkpoint, completed_lengths, environment_manifest
 
 
@@ -21,6 +21,14 @@ def test_command_adapter_versioned_contract(tmp_path):
     assert adapter.generate("prompt", None, None, 10, 1) == "generated"
     assert adapter.detect("text", None) == 2.5
     assert adapter.capabilities()["available"] is True
+
+
+def test_windows_command_parser_preserves_paths_and_quotes():
+    command = '"C:\\Program Files\\Python\\python.exe" "C:\\Temp\\adapter.py"'
+    assert _split_command(command, windows=True) == (
+        "C:\\Program Files\\Python\\python.exe",
+        "C:\\Temp\\adapter.py",
+    )
 
 
 def test_manifest_checkpoint_resume(tmp_path):

@@ -10,11 +10,28 @@ or silently approximating them in this harness.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass
+from typing import Optional
 
 PROTOCOL_VERSION = "1.0"
+
+
+def _split_command(command: str, *, windows: Optional[bool] = None) -> tuple[str, ...]:
+    """Split an adapter command without corrupting Windows path separators."""
+    if windows is None:
+        windows = os.name == "nt"
+    argv = shlex.split(command, posix=not windows)
+    if windows:
+        argv = [
+            value[1:-1]
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}
+            else value
+            for value in argv
+        ]
+    return tuple(argv)
 
 
 class AdapterContractError(RuntimeError):
@@ -36,7 +53,7 @@ class CommandScheme:
             name, family, source, command = spec.split("|", 3)
         except ValueError as exc:
             raise ValueError("adapter must be NAME|FAMILY|SOURCE|COMMAND") from exc
-        argv = tuple(shlex.split(command))
+        argv = _split_command(command)
         if not argv:
             raise ValueError("adapter command cannot be empty")
         return cls(name=name, family=family, source=source, command=argv)
