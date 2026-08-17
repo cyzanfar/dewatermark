@@ -39,7 +39,8 @@ def test_generated_browser_policy_is_current():
         cwd=ROOT,
         check=True,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        timeout=30,
     ).stdout
     assert generated == (ROOT / "web/unicode-policy.mjs").read_text(encoding="utf-8")
     assert f'POLICY_VERSION = "{UNICODE_POLICY_VERSION}"' in generated
@@ -62,7 +63,8 @@ process.stdout.write(JSON.stringify(cases.map((item) => sanitizeTextWithReport(i
         input=json.dumps(CASES, ensure_ascii=False),
         check=True,
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        timeout=30,
     )
     browser = json.loads(completed.stdout)
     for case, result in zip(CASES, browser):

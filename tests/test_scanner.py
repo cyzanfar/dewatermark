@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from dewatermark.scanner import (
@@ -68,7 +69,8 @@ def test_safe_fix_is_atomic_and_preserves_bom_crlf_and_mode(tmp_path: Path):
     target.chmod(0o640)
     report = scan_paths([target], fix=True)
     assert target.read_bytes() == b"\xef\xbb\xbfhello\r\nnext\r\n"
-    assert target.stat().st_mode & 0o777 == 0o640
+    if os.name != "nt":
+        assert target.stat().st_mode & 0o777 == 0o640
     assert report.fixed_files == (str(target),)
     assert len(report.edits) == 1
     assert report.edits[0].original_codepoints == ("U+200B",)

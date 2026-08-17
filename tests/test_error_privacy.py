@@ -126,7 +126,8 @@ def test_http_handler_and_scanner_hide_failure_details(monkeypatch, tmp_path):
     handler.do_POST()
     assert responses == [(400, {"error": "invalid request"})]
 
-    target = tmp_path / f"{SECRET.replace('/', '_')}.txt"
+    private_filename = "private-source-bearer-secret-private-model.txt"
+    target = tmp_path / private_filename
     target.write_text("text", encoding="utf-8")
     monkeypatch.setattr(
         scanner.Path,
@@ -134,7 +135,9 @@ def test_http_handler_and_scanner_hide_failure_details(monkeypatch, tmp_path):
         lambda _path: (_ for _ in ()).throw(OSError(SECRET)),
     )
     report = scanner.scan_paths([target])
-    assert SECRET not in json.dumps(report.to_dict())
+    rendered = json.dumps(report.to_dict())
+    assert SECRET not in rendered
+    assert private_filename not in rendered
     assert report.errors[0].startswith("file_sha256:")
 
 

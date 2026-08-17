@@ -193,10 +193,13 @@ def test_command_inherits_only_minimal_non_secret_environment(
     allowed = {"PATH"}
     if sys.platform == "win32":
         allowed.update({"SYSTEMROOT", "WINDIR", "PATHEXT"})
-    elif sys.platform == "darwin":
-        # The Python runtime and CoreFoundation add these locale values inside
-        # the child even when they are absent from Popen's explicit env.
-        allowed.update({"LC_CTYPE", "__CF_USER_TEXT_ENCODING"})
+    elif sys.platform in {"darwin", "linux"}:
+        # The Python runtime may add this locale value inside the child even
+        # when it is absent from Popen's explicit environment.
+        allowed.add("LC_CTYPE")
+        if sys.platform == "darwin":
+            # CoreFoundation also adds its user-text encoding on macOS.
+            allowed.add("__CF_USER_TEXT_ENCODING")
     assert set(environment).issubset(allowed)
     assert "PATH" in environment
     assert all(
