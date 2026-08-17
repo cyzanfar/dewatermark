@@ -9,6 +9,7 @@ This project follows Semantic Versioning and records user-visible changes here.
 - Added a PyPI Trusted Publishing workflow and complete Unicode data licensing
   notices to the release artifacts.
 - Fixed external evaluation adapter command parsing on Windows.
+- Updated GitHub Actions to their Node.js 24 runtimes.
 - Added versioned typed result models and exception hierarchy.
 - Added provider protocols, registry, and Python entry-point discovery.
 - Added capability discovery, side-effect-free execution plans, events, batch
