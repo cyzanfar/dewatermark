@@ -1,0 +1,100 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dewatermark"
+dynamic = ["version"]
+description = "Remove Unicode text watermarks and mitigate published statistical LLM watermarks with quality-constrained rewriting."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE", "UNICODE_LICENSE.txt"]
+authors = [{ name = "Cyrus Anfar" }]
+keywords = ["watermark", "ai-text", "steganography", "unicode", "llm", "detection"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Security",
+    "Topic :: Text Processing :: Filters",
+]
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+local = ["torch>=2.2", "transformers>=4.44"]
+eval = [
+    "torch>=2.2",
+    "transformers>=4.45",
+    "sentence-transformers>=3.0",
+    "bert-score>=0.3.13",
+    "mauve-text>=0.4.0",
+]
+dev = [
+    "pytest>=8", "pytest-cov>=5", "hypothesis>=6", "ruff>=0.9",
+    "mypy>=1.11,<2", "types-requests>=2.31", "build>=1.2", "twine>=5",
+]
+
+[project.scripts]
+dewatermark = "dewatermark.cli:main"
+dewatermark-eval = "dewatermark_eval.run_eval:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "eval"]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[project.urls]
+Homepage = "https://github.com/cyzanfar/dewatermark"
+Repository = "https://github.com/cyzanfar/dewatermark"
+Issues = "https://github.com/cyzanfar/dewatermark/issues"
+Changelog = "https://github.com/cyzanfar/dewatermark/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dewatermark"]
+exclude = ["eval/.venv", "eval/**/__pycache__", "eval/RESULTS.md"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"eval" = "dewatermark_eval"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/dewatermark", "eval/*.py", "eval/README.md",
+    "README.md", "LICENSE", "UNICODE_LICENSE.txt", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md", "AGENTS.md", "docs", "examples", "schemas", "tests",
+]
+
+[tool.hatch.version]
+path = "src/dewatermark/_version.py"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["src/dewatermark"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["dewatermark"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 65

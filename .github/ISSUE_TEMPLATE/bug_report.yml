@@ -1,0 +1,22 @@
+name: Bug report
+description: Report reproducible package behavior without sharing sensitive text.
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use synthetic text and redact all credentials.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: dewatermark and Python versions
+    validations:
+      required: true

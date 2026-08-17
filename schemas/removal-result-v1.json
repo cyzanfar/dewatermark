@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/cyzanfar/dewatermark/schemas/removal-result-v1.json",
+  "title": "DewatermarkRemovalResult",
+  "type": "object",
+  "required": ["schema_version", "cleaned_text", "stages", "report"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "cleaned_text": {"type": "string"},
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "status", "changed", "accepted", "details"],
+        "properties": {
+          "stage": {"type": "string"},
+          "status": {"enum": ["success", "unchanged", "partial", "failed"]},
+          "changed": {"type": "boolean"},
+          "accepted": {"type": "boolean"},
+          "backend": {"type": ["string", "null"]},
+          "fallback_reason": {"type": ["string", "null"]},
+          "warning": {"type": ["string", "null"]},
+          "error": {"type": ["string", "null"]},
+          "details": {"type": "object"}
+        }
+      }
+    },
+    "report": {
+      "type": "object",
+      "required": ["schema_version", "mode", "status", "changed"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "mode": {"type": "string"},
+        "status": {"enum": ["success", "unchanged", "partial", "failed"]},
+        "changed": {"type": "boolean"},
+        "metadata": {"type": "object"}
+      }
+    }
+  },
+  "additionalProperties": false
+}
