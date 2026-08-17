@@ -9,7 +9,7 @@ def removal_result_schema() -> dict[str, Any]:
     """Return the removal-result JSON Schema for agent tool registration."""
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://github.com/cyzanfar/dewatermark/schemas/removal-result-v1.json",
+        "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/removal-result-v1.json",
         "title": "DewatermarkRemovalResult",
         "type": "object",
         "required": ["schema_version", "cleaned_text", "stages", "report"],

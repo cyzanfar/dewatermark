@@ -1,0 +1,4 @@
+interface:
+  display_name: "Remove Text Watermarks"
+  short_description: "Inspect and clean hidden Unicode text artifacts safely"
+  default_prompt: "Use dewatermark to inspect text first, then apply the least destructive cleanup that satisfies the request."

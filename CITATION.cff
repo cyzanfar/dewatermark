@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If dewatermark supports your research, please cite the software."
+title: "dewatermark: an open-source text watermark robustness toolkit"
+type: software
+authors:
+  - family-names: Anfar
+    given-names: Cyrus
+repository-code: "https://github.com/cyzanfar/text-watermark-remover"
+url: "https://pypi.org/project/dewatermark/"
+license: MIT
+version: 0.4.0
+date-released: 2026-08-16
+keywords: [text watermark remover, LLM watermark, Unicode steganography]

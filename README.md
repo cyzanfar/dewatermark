@@ -1,12 +1,21 @@
-# dewatermark
+# dewatermark — Open-Source AI Text Watermark Remover
 
 [![PyPI version](https://img.shields.io/pypi/v/dewatermark.svg)](https://pypi.org/project/dewatermark/)
 [![Python versions](https://img.shields.io/pypi/pyversions/dewatermark.svg)](https://pypi.org/project/dewatermark/)
-[![CI](https://github.com/cyzanfar/dewatermark/actions/workflows/ci.yml/badge.svg)](https://github.com/cyzanfar/dewatermark/actions/workflows/ci.yml)
+[![CI](https://github.com/cyzanfar/text-watermark-remover/actions/workflows/ci.yml/badge.svg)](https://github.com/cyzanfar/text-watermark-remover/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/cyzanfar/text-watermark-remover?style=social)](https://github.com/cyzanfar/text-watermark-remover/stargazers)
 
-Remove Unicode text watermarks and mitigate published statistical LLM
-watermarks with quality-constrained rewriting.
+**Find and remove hidden Unicode text watermarks locally, then test published
+statistical LLM watermark mitigations with reproducible, quality-constrained
+experiments.** Use it from Python, CLI, pre-commit, GitHub code scanning,
+HTTP/OpenAPI, Docker, or an MCP-compatible AI agent.
+
+[Try the private browser playground](https://cyzanfar.github.io/text-watermark-remover/)
+· [Install from PyPI](https://pypi.org/project/dewatermark/)
+· [Explore integrations](docs/INTEGRATIONS.md)
+
+If this saves you time, consider [starring the repository](https://github.com/cyzanfar/text-watermark-remover)—it helps other developers find a careful alternative to unverifiable universal-removal claims.
 
 It does **not** claim to remove an Anthropic/Claude-specific watermark. Anthropic
 has not publicly documented a deployed Claude text-watermark scheme or detector.
@@ -23,26 +32,46 @@ remain detectable after rewriting.
   authorized remote rewriting, with deterministic quality gates and fallbacks.
 - Provides forensic analysis, dry-run planning, batch and async APIs, a provider
   extension system, and a matched-control evaluation harness.
+- Scans repositories, emits SARIF, and integrates with pre-commit, HTTP/OpenAPI,
+  Docker, and MCP-compatible AI agents.
+
+## Reproducible proof, with explicit scope
+
+The deterministic aggressive-profile fixture benchmark removes all 50 embedded
+payloads across five Unicode covert-channel families.
+
+| Fixture family | Removed |
+| --- | ---: |
+| Zero-width binary | 10/10 |
+| Variation selectors | 10/10 |
+| Tags block | 10/10 |
+| Cross-script homoglyphs | 10/10 |
+| Exotic spaces | 10/10 |
+| **Total** | **50/50** |
+
+See the [tracked report](benchmarks/unicode-v0.4.md) and rerun it with
+`PYTHONPATH=src python eval/run_eval.py --skip-statistical`. This fixture result
+is not evidence about statistical or undisclosed vendor watermarks.
 
 Unicode cleanup is deterministic. Statistical mitigation depends on the named
 scheme, detector, model, configuration, text length, and quality constraint.
 
 ## Install
 
-The current stable release is
-[v0.3.0](https://github.com/cyzanfar/dewatermark/releases/tag/v0.3.0):
+The current stable release is v0.3.0; v0.4.0 is under development:
 
 ```bash
 pip install dewatermark
 pip install "dewatermark[local]"   # local self-information scorer + BIRA
 pip install "dewatermark[eval]"    # evaluation models
+pip install "dewatermark[agents]"  # MCP server on Python 3.10+
 ```
 
 Install the latest development version from `main` only when you need unreleased
 changes:
 
 ```bash
-pip install "git+https://github.com/cyzanfar/dewatermark.git"
+pip install "git+https://github.com/cyzanfar/text-watermark-remover.git"
 ```
 
 ## Quickstart
@@ -80,6 +109,10 @@ dewatermark capabilities
 dewatermark remove --mode auto --dry-run --format json
 dewatermark remove --mode sanitize --format jsonl < requests.jsonl
 dewatermark schema
+dewatermark check .
+dewatermark check . --format sarif --output dewatermark.sarif
+dewatermark serve                    # local HTTP + OpenAPI
+dewatermark-mcp                      # MCP stdio server
 ```
 
 Python callers can inspect `dewatermark.capabilities()` and
@@ -87,6 +120,14 @@ Python callers can inspect `dewatermark.capabilities()` and
 `remove_many()` preserves batch order and `aremove()` integrates with async agent
 runtimes. Results carry a versioned JSON schema with explicit status, backend,
 fallback, warnings, and stage details.
+
+## Repository scanning
+
+`dewatermark check` reports exact files, lines, columns, categories, and code
+points. It never modifies files unless `--fix` is passed explicitly. SARIF output
+can appear as annotations in GitHub code scanning, and the included pre-commit
+hook blocks hidden characters before they enter a commit. See the
+[integration recipes](docs/INTEGRATIONS.md).
 
 Remote processing is deny-by-default because source text may be sensitive:
 
@@ -183,6 +224,11 @@ Third-party scorers and rewriters can implement the structural interfaces in
 `dewatermark.protocols`, register in-process, or publish through the
 `dewatermark.providers` entry-point group. See [extension documentation](docs/EXTENSIONS.md),
 [architecture](docs/ARCHITECTURE.md), and [contributor guide](CONTRIBUTING.md).
+
+Good first contributions include detector adapters, editor integrations,
+Unicode fixtures from real systems, and benchmark replications. Review the
+[roadmap](ROADMAP.md) or open a
+[feature proposal](https://github.com/cyzanfar/text-watermark-remover/issues/new/choose).
 
 ## Scope limitations
 

@@ -36,6 +36,7 @@ from .pipeline import remove_many as _remove_many
 from .providers import get_provider, list_providers, provider_errors, register_provider
 from .quality import QualityReport, evaluate_quality
 from .runtime import capabilities, plan
+from .scanner import ScanFinding, ScanReport, scan_paths, scan_text, to_sarif
 from .schemas import removal_result_schema
 from .scoring import ScorerUnavailable, clear_cache, self_information, surrogate_score
 from .unicode import analyze as _analyze
@@ -77,6 +78,11 @@ __all__ = [
     "remove_many",
     "reset_config",
     "sanitize",
+    "ScanFinding",
+    "ScanReport",
+    "scan_paths",
+    "scan_text",
+    "to_sarif",
     "self_information",
     "surrogate_score",
 ]

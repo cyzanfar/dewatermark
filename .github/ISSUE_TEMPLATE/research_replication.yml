@@ -1,0 +1,17 @@
+name: Research replication
+description: Report a reproducible result for a named watermark scheme.
+title: "[Replication]: "
+labels: [research]
+body:
+  - type: input
+    id: paper
+    attributes: {label: Paper or scheme, placeholder: "KGW, Unigram, SynthID-style, DOI/URL"}
+    validations: {required: true}
+  - type: textarea
+    id: config
+    attributes: {label: Detector and generation configuration, description: Include key threshold lengths immutable revision and random seeds.}
+    validations: {required: true}
+  - type: textarea
+    id: results
+    attributes: {label: Results and artifacts, description: Include matched controls confidence intervals quality metrics and machine-readable artifacts.}
+    validations: {required: true}
