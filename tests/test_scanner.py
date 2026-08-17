@@ -11,11 +11,11 @@ def test_scan_text_has_locations():
 
 def test_scan_paths_and_fix(tmp_path: Path):
     target = tmp_path / "sample.md"
-    target.write_text("he\u200bllo")
+    target.write_text("he\u200bllo", encoding="utf-8")
     report = scan_paths([tmp_path], fix=True)
     assert report.files_scanned == 1
     assert len(report.findings) == 1
-    assert target.read_text() == "hello"
+    assert target.read_text(encoding="utf-8") == "hello"
 
 
 def test_sarif_shape():
