@@ -13,10 +13,12 @@ from . import __version__, analyze, capabilities, plan, remove, sanitize
 from .config import DewatermarkConfig
 from .exceptions import DewatermarkError
 from .models import SCHEMA_VERSION
+from .scanner import scan_paths, scan_text, to_sarif
 from .schemas import removal_result_schema
 from .scoring import load
 
 EXIT_OK = 0
+EXIT_FINDINGS = 1
 EXIT_USAGE = 2
 EXIT_BACKEND = 3
 EXIT_PROCESSING = 4
@@ -58,6 +60,17 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("schema")
     download = sub.add_parser("download-model")
     download.add_argument("--model")
+    check = sub.add_parser("check", help="scan files for suspicious Unicode")
+    check.add_argument("paths", nargs="*", type=Path)
+    check.add_argument("--format", choices=("text", "json", "sarif"), default="text")
+    check.add_argument("--output", type=Path)
+    check.add_argument("--fix", action="store_true")
+    check.add_argument("--profile", choices=("safe", "aggressive"), default="safe")
+    check.add_argument("--max-file-bytes", type=int, default=2_000_000)
+    server = sub.add_parser("serve", help="run the local HTTP/OpenAPI API")
+    server.add_argument("--host", default="127.0.0.1")
+    server.add_argument("--port", type=int, default=8765)
+    server.add_argument("--api-key-env", default="DEWATERMARK_SERVER_API_KEY")
     return parser
 
 
@@ -112,6 +125,54 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             load(cfg)
             _emit({"status": "ready", "model": cfg.local_lm})
             return EXIT_OK
+        if args.command == "serve":
+            from .server import serve
+
+            serve(args.host, args.port, args.api_key_env)
+            return EXIT_OK
+        if args.command == "check":
+            if args.paths:
+                report = scan_paths(
+                    args.paths,
+                    max_file_bytes=args.max_file_bytes,
+                    fix=args.fix,
+                    profile=args.profile,
+                )
+            elif not sys.stdin.isatty():
+                from .scanner import ScanReport
+
+                report = ScanReport(1, scan_text(sys.stdin.read()))
+            else:
+                report = scan_paths(
+                    [Path(".")],
+                    max_file_bytes=args.max_file_bytes,
+                    fix=args.fix,
+                    profile=args.profile,
+                )
+            value: Any
+            if args.format == "sarif":
+                value = to_sarif(report)
+            elif args.format == "json":
+                value = report.to_dict()
+            else:
+                value = "\n".join(
+                    f"{f.path}:{f.line}:{f.column}: {f.category} {f.codepoint} - {f.message}"
+                    for f in report.findings
+                )
+                if not value:
+                    value = f"No suspicious Unicode found in {report.files_scanned} file(s)."
+            output = (
+                value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
+            )
+            if args.output:
+                args.output.write_text(output + "\n", encoding="utf-8")
+            else:
+                print(output)
+            return (
+                EXIT_PROCESSING
+                if report.errors
+                else (EXIT_FINDINGS if report.findings else EXIT_OK)
+            )
 
         if args.command == "remove":
             cfg = DewatermarkConfig.from_env()

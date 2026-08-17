@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Repository scanner with JSON, SARIF, explicit fixing, pre-commit, and a GitHub Action.
+- Dependency-free local HTTP/OpenAPI service and optional MCP server.
+- Browser playground, Docker recipe, agent skill, roadmap, citation, and launch kit.
+- Published deterministic Unicode fixture benchmark across five families.
+
+### Changed
+
+- Repositioned documentation around the accurate term “open-source AI text watermark remover.”
+
 This project follows Semantic Versioning and records user-visible changes here.
 
 ## Unreleased

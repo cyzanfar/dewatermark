@@ -1,0 +1,7 @@
+- id: dewatermark-check
+  name: Detect hidden Unicode text watermarks
+  description: Finds zero-width characters and other suspicious Unicode artifacts.
+  entry: dewatermark check
+  language: python
+  types: [text]
+  pass_filenames: true

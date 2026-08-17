@@ -1,0 +1,16 @@
+name: Feature proposal
+description: Propose an integration, detector adapter, or developer improvement.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: Problem, description: What user or research problem should this solve?}
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes: {label: Proposed solution, description: Include API shape or usage examples when possible.}
+    validations: {required: true}
+  - type: textarea
+    id: safety
+    attributes: {label: Privacy quality and claim boundaries, description: Note network use model downloads semantic risks and evidence needed.}
