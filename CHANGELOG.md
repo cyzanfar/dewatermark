@@ -96,6 +96,8 @@ forward into this release candidate.
 - Common `.env.*` credential files are ignored while `.env.example` remains
   available as an explicit template, and the feature-request issue form now
   parses as valid YAML.
+- The pinned build backend remains installable on the declared Python 3.9
+  compatibility floor.
 - Replaced non-resolving public JSON Schema identifiers with directly
   retrievable source URLs.
 

@@ -2,7 +2,7 @@
 # with each release candidate; the image base itself is digest-pinned.
 certifi==2026.7.22
 charset-normalizer==3.5.1
-hatchling==1.32.0
+hatchling==1.27.0
 idna==3.18
 packaging==26.3
 pathspec==1.1.1
