@@ -104,6 +104,8 @@ forward into this release candidate.
 - The JetBrains integration's strict Gradle verification metadata now includes
   the Linux-resolved Jackson parent POMs and JUnit module descriptors used by
   its plugin and test classpaths.
+- Reworked the README around a plain, task-first install and quickstart; moved
+  the detailed runtime settings into a dedicated configuration guide.
 - Replaced non-resolving public JSON Schema identifiers with directly
   retrievable source URLs.
 
