@@ -13,7 +13,7 @@
       "recorded_device": "cpu",
       "recorded_torch_version": "2.4.1",
       "report_sha256": "5c81adf085e7ee62b3ed44cac29355badfaee241bc5fb8fac1076b91c94cc122",
-      "vectors_sha256": "989a683c627e749f5a08108315c8f82c45e08f9409d10e8811e6539772b333fc"
+      "vectors_sha256": "73b691651a04066062b5fc6a67c0c8d17f5cde13a7185d650b11d1088f645ee1"
     },
     "minimum_effective_tokens": 32,
     "production_detection": false,
