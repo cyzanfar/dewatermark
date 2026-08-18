@@ -101,6 +101,8 @@ forward into this release candidate.
 - The packaged KGW adapter capability now matches the exact byte digest of its
   canonical golden-vector fixture, with LF checkouts enforced so that digest is
   stable on Windows.
+- The JetBrains integration's strict Gradle verification metadata now includes
+  the Linux-resolved Jackson parent POM used by its test classpath.
 - Replaced non-resolving public JSON Schema identifiers with directly
   retrievable source URLs.
 
