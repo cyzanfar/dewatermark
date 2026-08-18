@@ -102,7 +102,8 @@ forward into this release candidate.
   canonical golden-vector fixture, with LF checkouts enforced so that digest is
   stable on Windows.
 - The JetBrains integration's strict Gradle verification metadata now includes
-  the Linux-resolved Jackson parent POM used by its test classpath.
+  the Linux-resolved Jackson parent POMs and JUnit module descriptors used by
+  its plugin and test classpaths.
 - Replaced non-resolving public JSON Schema identifiers with directly
   retrievable source URLs.
 
