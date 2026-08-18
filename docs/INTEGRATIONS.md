@@ -46,7 +46,7 @@ jobs:
           sarif_file: dewatermark.sarif
 ```
 
-Use `v0.6.0` after that release exists; pin a full commit SHA when your threat
+Use `v0.6.0` to follow this release; pin a full commit SHA when your threat
 model requires an immutable third-party action. The `paths` input is
 newline-delimited, treats every line as a literal path, and cannot inject
 scanner options.
@@ -105,8 +105,8 @@ docker run --rm -e DEWATERMARK_SERVER_API_KEY=change-me -p 8765:8765 \
 The container runs as an unprivileged user. Its safe default prints local
 capabilities and exits instead of exposing an unauthenticated service.
 
-The release workflow is configured to publish images to the GitHub Container
-Registry with provenance and an SPDX SBOM. After the `v0.6.0` release:
+The release workflow publishes images to the GitHub Container Registry with
+provenance and an SPDX SBOM. For version `0.6.0`:
 
 ```bash
 docker pull ghcr.io/cyzanfar/text-watermark-remover:0.6.0

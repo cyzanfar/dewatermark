@@ -25,10 +25,12 @@ claim to detect or remove undisclosed or statistical model watermarks.
 The policy is generated from the same canonical JSON used by the Python
 `dewatermark` package. Cross-runtime golden tests prevent behavior drift.
 
-After the first registry release:
+The JavaScript package is prepared for npm publication. Until its registry
+publisher is enabled, build the exact package from a source checkout:
 
 ```bash
-npm install @cyzanfar/dewatermark-unicode
+cd web
+npm pack
 ```
 
 The package is ESM-only, requires Node 18 or a modern browser, has no runtime

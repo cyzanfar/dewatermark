@@ -7,12 +7,10 @@ stdin, strips ambient credentials from the child environment, caps output, and
 never opens a socket.
 
 This bridge requires `dewatermark>=0.6,<0.7` because it uses the policy-aware
-`check --stdin-path` contract. Until `v0.6.0` is published, install the release
-candidate from the repository root; after release, use the stable constraint:
+`check --stdin-path` contract:
 
 ```bash
-pipx install --force .
-# After v0.6.0 is published: pipx install 'dewatermark>=0.6,<0.7'
+pipx install 'dewatermark>=0.6,<0.7'
 cd integrations/vscode
 npm ci
 npm test

@@ -1,5 +1,5 @@
 # Exact inputs for the minimal Python 3.12 container build. Review these pins
-# with each release candidate; the image base itself is digest-pinned.
+# with each release; the image base itself is digest-pinned.
 certifi==2026.7.22
 charset-normalizer==3.5.1
 hatchling==1.27.0

@@ -11,7 +11,7 @@ use `DEWATERMARK_*` names. Python versions are supported from 3.9 through the
 latest version validated in CI.
 
 Provider method additions remain optional within a minor release when they do
-not affect safety. Since 0.5, every extension that can receive text must expose
+not affect safety. Starting with 0.6.0, every extension that can receive text must expose
 a static capability manifest; manifest-less extensions fail closed before
 construction. Removal or reinterpretation of result fields requires a major
 schema version.

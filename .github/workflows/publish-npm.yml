@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: publish-npm-${{ github.event.release.tag_name || github.ref_name }}
+  group: release-publishing
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+      - name: Verify the release tag targets a commit on main
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"

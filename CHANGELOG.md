@@ -4,9 +4,10 @@ This project follows Semantic Versioning. Public changes are recorded here.
 
 ## [Unreleased]
 
-The changes below target `0.6.0`. Version `0.5.0` was an unpublished source
-milestone: it was never tagged or uploaded to PyPI, and its changes are carried
-forward into this release candidate.
+## [0.6.0] - 2026-08-18
+
+Version `0.5.0` was an unpublished source milestone: it was never tagged or
+uploaded to PyPI, and its changes are included in this release.
 
 ### Added
 
@@ -91,8 +92,10 @@ forward into this release candidate.
   model identifiers remain reproducible.
 - Release workflows validate a shared Python/npm/citation version, and stable
   publishing refuses prerelease or non-SemVer identities until a dated
-  changelog release heading exists; Python dependency audits no longer
-  misclassify the unpublished local distribution as a vulnerable dependency.
+  changelog release heading exists. Release tags must point to commits on
+  `main`, and registry publication is serialized. Python dependency audits no
+  longer misclassify the unpublished local distribution as a vulnerable
+  dependency.
 - Common `.env.*` credential files are ignored while `.env.example` remains
   available as an explicit template, and the feature-request issue form now
   parses as valid YAML.

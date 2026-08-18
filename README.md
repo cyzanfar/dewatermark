@@ -20,33 +20,22 @@ watermark when no compatible detector is available.
 · [View on PyPI](https://pypi.org/project/dewatermark/)
 · [Explore integrations](https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/INTEGRATIONS.md)
 
-> **Development version:** this page describes the unreleased `0.6.0` source.
-> Install the current source as shown below to use these exact APIs. Until
-> `v0.6.0` is published, `python -m pip install dewatermark` installs the latest
-> stable release, whose API is older.
-
 ## Install
 
-Python 3.9 or newer is required. Install the version documented on this page:
-
-```bash
-python -m pip install "git+https://github.com/cyzanfar/text-watermark-remover.git"
-dewatermark --version
-```
-
-The core package includes Unicode cleanup, analysis, repository scanning, and
-the CLI. After `v0.6.0` is released, the normal stable install will be:
+Python 3.9 or newer is required. The core package includes Unicode cleanup,
+analysis, repository scanning, and the CLI:
 
 ```bash
 python -m pip install dewatermark
+dewatermark --version
 ```
 
-Optional features can be installed from a source checkout:
+Install optional features only when you need them:
 
 ```bash
-python -m pip install -e ".[local]"   # local model-backed rewriting
-python -m pip install -e ".[eval]"    # research and evaluation tools
-python -m pip install -e ".[agents]"  # MCP server; Python 3.10+
+python -m pip install "dewatermark[local]"   # local model-backed rewriting
+python -m pip install "dewatermark[eval]"    # research and evaluation tools
+python -m pip install "dewatermark[agents]"  # MCP server; Python 3.10+
 ```
 
 Models are not downloaded automatically, even when an optional package is
@@ -261,7 +250,7 @@ dewatermark skill install --output ./remove-text-watermarks
 
 ## Integrations
 
-- **Browser and unreleased npm package:** use the
+- **Browser and JavaScript source:** use the
   [browser playground](https://cyzanfar.github.io/text-watermark-remover/),
   where text stays in the browser, or package the browser module from source.
 - **Editors:** local-only VS Code and JetBrains integrations are included.

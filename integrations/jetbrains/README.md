@@ -10,8 +10,7 @@ Requirements: a Java runtime able to launch Gradle and
 `dewatermark>=0.6,<0.7` on the IDE process PATH. The checksum-pinned wrapper
 provisions the Java 21 compile toolchain when it is not installed locally.
 
-Until `v0.6.0` is published, run `pipx install --force .` from the repository
-root. After release, use `pipx install 'dewatermark>=0.6,<0.7'`.
+Install the matching CLI with `pipx install 'dewatermark>=0.6,<0.7'`.
 
 ```bash
 cd integrations/jetbrains
