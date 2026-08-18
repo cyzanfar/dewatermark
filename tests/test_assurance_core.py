@@ -19,6 +19,7 @@ from dewatermark.quality import evaluate_quality
 from dewatermark.request_context import (
     RequestContext,
     ResourceBudgetExceeded,
+    current_request_context,
     request_scope,
 )
 
@@ -72,6 +73,61 @@ class SafeProvider:
             "status": "success",
             "strategy": "test",
         }
+
+
+def test_unicode_verification_is_exact_same_policy_not_independent_statistics():
+    capability = dewatermark.detector_manifest("unicode")
+    assert capability is not None
+    assert capability.independent is False
+    assert capability.metadata["verification_basis"] == "literal_codepoint_policy"
+
+    result = dewatermark.remove("he\u200bllo", mode="sanitize", config=OFFLINE)
+    assert result.report.transformation_status == "unicode_sanitized"
+    assert result.report.verification_status == "verified_cleared"
+    doctor = dewatermark.doctor_detectors()
+    unicode_checks = [check for check in doctor.checks if check.detector == "unicode-artifacts-v1"]
+    assert all(check.severity == "pass" for check in unicode_checks)
+
+
+def test_canonical_unicode_detector_identifier_cannot_be_spoofed():
+    constructed: list[bool] = []
+
+    class UnicodeImpostor:
+        capability = CapabilityManifest(
+            identifier="unicode-artifacts-v1",
+            kind="detector",
+            schemes=("unicode-artifacts",),
+            calibrated=True,
+            independent=True,
+            metadata={"verification_basis": "literal_codepoint_policy"},
+        )
+
+        def __init__(self, _config=None):
+            constructed.append(True)
+
+        def available(self):
+            return True
+
+        def detect(self, text):
+            return DetectionEvidence(
+                detector="unicode-artifacts-v1",
+                scheme="unicode-artifacts",
+                status="detected" if text == "source" else "not_detected",
+                score=1.0 if text == "source" else 0.0,
+                threshold=1.0,
+                text_characters=len(text),
+            )
+
+    with pytest.raises(dewatermark.ConfigurationError, match="identifier is reserved"):
+        dewatermark.verify("source", "candidate", UnicodeImpostor(), config=OFFLINE)
+
+    register_detector("unicode-impostor", UnicodeImpostor)
+    try:
+        with pytest.raises(dewatermark.ConfigurationError, match="identifier is reserved"):
+            dewatermark.inspect("source", "unicode-impostor", config=OFFLINE)
+    finally:
+        unregister_detector("unicode-impostor")
+    assert constructed == [True]
 
 
 def test_detector_verified_receipt_and_provider_reserved_fields():
@@ -250,6 +306,69 @@ def test_batch_limit_is_checked_before_submission():
     cfg = replace(OFFLINE, max_batch_items=2)
     with pytest.raises(ValueError, match="max_batch_items"):
         dewatermark.pipeline.remove_many(["one", "two", "three"], config=cfg)
+
+
+def test_batch_items_share_one_request_call_budget(monkeypatch):
+    contexts = []
+
+    def fake_remove(text, *, context=None, **_options):
+        assert context is not None
+        contexts.append(context)
+        context.before_remote_call(
+            "https://example.com/v1/chat",
+            "test",
+            {"text_characters": len(text)},
+        )
+        return text
+
+    monkeypatch.setattr(dewatermark.pipeline, "_remove_with_context", fake_remove)
+    results = dewatermark.pipeline.remove_many(
+        ["one", "two", "three"],
+        config=replace(OFFLINE, max_remote_calls=2),
+        max_workers=1,
+    )
+
+    assert len({id(context) for context in contexts}) == 1
+    assert [item.succeeded for item in results] == [True, True, False]
+    assert contexts[0].ledger()["remote_calls_used"] == 2
+
+
+def test_detector_cannot_return_a_candidate_after_request_deadline():
+    class DeadlineDetector:
+        capability = CapabilityManifest(
+            identifier="deadline-detector",
+            kind="detector",
+            schemes=("fixture",),
+        )
+
+        def __init__(self, _config=None):
+            pass
+
+        def available(self):
+            return True
+
+        def detect(self, text):
+            context = current_request_context()
+            assert context is not None
+            context.deadline = 0.0
+            return DetectionEvidence(
+                detector="deadline-detector",
+                scheme="fixture",
+                status="not_detected",
+                text_characters=len(text),
+            )
+
+    register_detector("deadline-detector", DeadlineDetector)
+    try:
+        with pytest.raises(ResourceBudgetExceeded, match="deadline"):
+            dewatermark.remove(
+                "plain text",
+                mode="sanitize",
+                detector="deadline-detector",
+                config=OFFLINE,
+            )
+    finally:
+        unregister_detector("deadline-detector")
 
 
 def test_explicit_unsupported_detector_remains_primary_in_sanitize_mode():
@@ -545,3 +664,7 @@ def test_unicode_detector_cannot_verify_a_statistical_rewrite():
     assert result.cleaned_text == "A broad change."
     assert result.report.transformation_status == "mitigation_unverified"
     assert result.report.verification_status == "not_verifiable"
+    statistical = result.report.metadata["channels"]["statistical"]
+    assert statistical["before"] is None
+    assert statistical["after"] is None
+    assert statistical["verification_status"] == "not_verifiable"

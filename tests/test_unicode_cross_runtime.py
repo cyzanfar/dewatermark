@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from dewatermark.unicode import UNICODE_POLICY_VERSION, analyze, sanitize
+from dewatermark.unicode import UNICODE_POLICY_VERSION, analyze, sanitize, sanitize_with_edits
 
 ROOT = Path(__file__).parents[1]
 CASES = json.loads((ROOT / "tests/fixtures/unicode_golden.json").read_text(encoding="utf-8"))
@@ -68,6 +68,22 @@ process.stdout.write(JSON.stringify(cases.map((item) => sanitizeTextWithReport(i
     )
     browser = json.loads(completed.stdout)
     for case, result in zip(CASES, browser):
-        python_cleaned, _ = sanitize(case["input"], profile="safe")
+        python_cleaned, python_counts, python_edits = sanitize_with_edits(
+            case["input"], profile="safe"
+        )
         assert result["cleanedText"] == python_cleaned == case["safe"]
+        assert result["counts"] == python_counts
+        assert [
+            (item["category"], item["action"])
+            for item in result["edits"]
+            if item["category"] != "normalization"
+        ] == [
+            (item["category"], item["action"])
+            for item in python_edits
+            if item["category"] != "normalization"
+        ]
+        assert any(item["category"] == "normalization" for item in result["edits"]) == any(
+            item["category"] == "normalization" for item in python_edits
+        )
+        assert result["changed"] is bool(python_edits)
         assert result["policyVersion"] == UNICODE_POLICY_VERSION

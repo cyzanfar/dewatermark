@@ -1,0 +1,60 @@
+{
+  "description": "Public synthetic research fixtures; no provider text or production key material.",
+  "protocol_version": "1.0",
+  "vectors": [
+    {
+      "configuration_sha256": "3d8a24dfe5d6c0bf8302d000fef1b7bfb42ed78e8fe4e6946f4308c539062b14",
+      "expected_effective_tokens": 93,
+      "expected_score": 16.703293088490064,
+      "expected_status": "detected",
+      "name": "kgw-word-v1-positive",
+      "scheme": "kgw-word-v1",
+      "text": "mitigation sample sample calibration manifest calibration claim policy balanced channel explicit check transparent channel generator mitigation transform population corpus context operator validation watermark threshold offline local constraint metadata score workflow decision data language assurance token research decision fixture statistical explicit text evidence manifest baseline clear failure quality transparent baseline calibration explicit balanced threshold offline calibration document data consent check calibration workflow token data calibration manifest revision vector privacy explicit length fixture data check claim statistical workflow baseline matched generator vector language inspect candidate text analysis balanced watermark explicit version research text operator baseline policy check research"
+    },
+    {
+      "configuration_sha256": "3d8a24dfe5d6c0bf8302d000fef1b7bfb42ed78e8fe4e6946f4308c539062b14",
+      "expected_effective_tokens": 94,
+      "expected_score": -0.5954913341754137,
+      "expected_status": "not_detected",
+      "name": "kgw-word-v1-matched-control",
+      "scheme": "kgw-word-v1",
+      "text": "status constraint balanced reliable independent reliable population protocol transform careful watermark document corpus metadata report quality population manifest manifest constraint metadata network length transparent balanced policy vector report boundary independent decision privacy fixture clear careful population configuration protocol corpus manifest scheme watermark policy compare context revision sample configuration careful mitigation generator data privacy policy workflow test test population mitigation report status check policy explicit research manifest manifest sample report transform decision calibration benchmark source reference data validation length document vector version manifest watermark experiment golden explicit offline measure generator channel model source configuration decision local language"
+    },
+    {
+      "configuration_sha256": "01ce6151993e4d407532e3eb5cfff0125e69d75d98e7791bd9bdf63c86788853",
+      "expected_effective_tokens": 96,
+      "expected_score": 16.970562748477143,
+      "expected_status": "detected",
+      "name": "unigram-word-v1-positive",
+      "scheme": "unigram-word-v1",
+      "text": "length network matched token constraint model reliable operator policy length network reliable artifact report token policy report matched report artifact score model artifact artifact experiment token artifact length policy length length token length policy constraint measure report policy network artifact token matched experiment constraint policy policy artifact experiment reliable test model artifact policy artifact network score experiment artifact token score constraint operator matched reliable network score score score model reliable test matched measure reliable artifact length measure policy network operator matched reliable test reliable test network experiment consent reliable matched test consent reliable network measure length"
+    },
+    {
+      "configuration_sha256": "01ce6151993e4d407532e3eb5cfff0125e69d75d98e7791bd9bdf63c86788853",
+      "expected_effective_tokens": 96,
+      "expected_score": -0.9428090415820635,
+      "expected_status": "not_detected",
+      "name": "unigram-word-v1-matched-control",
+      "scheme": "unigram-word-v1",
+      "text": "model token candidate artifact reliable quality source explicit check channel manifest generator generator golden boundary model local reliable failure candidate transparent generator vector clear golden boundary privacy transparent watermark calibration verification source score status deterministic statistical inspect offline test calibration language report report threshold candidate research constraint status control claim source deterministic vector measure quality policy revision report generator assurance mitigation protocol calibration manifest reliable metadata consent clear golden vector fixture check golden clear length source deterministic revision validation generator generator corpus control length document scheme fixture compare statistical transparent score revision manifest verification policy assurance"
+    },
+    {
+      "configuration_sha256": "e0fd9138c69a9ab573c02f0773e742771c1b75c3982cfffa8d29a02a64d1532b",
+      "expected_effective_tokens": 92,
+      "expected_score": 16.076491949347716,
+      "expected_status": "detected",
+      "name": "tournament-word-v1-positive",
+      "scheme": "tournament-word-v1",
+      "text": "token workflow generator report document privacy corpus version manifest decision explicit calibration corpus boundary length verification corpus balanced vector independent status validation calibration mitigation manifest channel claim experiment language version independent evidence watermark score check baseline quality measure compare compare token calibration inspect balanced operator research analysis verification workflow privacy failure workflow assurance boundary evidence failure candidate privacy corpus language benchmark version document compare revision score status clear consent threshold mitigation artifact test balanced operator test model control candidate matched detector corpus offline score privacy candidate compare workflow constraint threshold benchmark validation language evidence golden explicit"
+    },
+    {
+      "configuration_sha256": "e0fd9138c69a9ab573c02f0773e742771c1b75c3982cfffa8d29a02a64d1532b",
+      "expected_effective_tokens": 92,
+      "expected_score": 0.3395988277307501,
+      "expected_status": "not_detected",
+      "name": "tournament-word-v1-matched-control",
+      "scheme": "tournament-word-v1",
+      "text": "deterministic transform control generator local verification scheme context golden test version control quality measure transform baseline revision boundary benchmark independent text inspect protocol golden deterministic golden check report transform check decision experiment offline reference corpus careful constraint fixture metadata manifest control analysis source candidate context language score experiment careful configuration language artifact reference artifact threshold consent verification test workflow experiment language threshold reference calibration generator experiment control verification control vector fixture golden document deterministic metadata careful network scheme detector workflow language assurance benchmark reliable compare data transform score watermark control version artifact document failure offline validation"
+    }
+  ]
+}

@@ -10,13 +10,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from threading import Event, RLock
-from typing import Any, Iterator, Mapping, Optional
+from threading import Event, RLock, get_ident
+from typing import Any, Iterator, Mapping, Optional, cast
 from urllib.parse import urlparse
 
 from .config import DewatermarkConfig
@@ -51,6 +52,7 @@ _QUALITY_REASONS = frozenset(
         "negation changed",
         "modality changed",
         "protected entity-like spans changed",
+        "citations changed",
         "document structure changed",
         "unresolved mask placeholder",
         "semantic score below threshold",
@@ -78,6 +80,14 @@ class ResourceBudgetExceeded(BackendUnavailableError):
     """A request exceeded a declared call, token, or wall-clock limit."""
 
 
+class ExtensionUsageRejected(ResourceBudgetExceeded):
+    """An extension could not enter its declared accounting boundary."""
+
+    def __init__(self, reason_code: str) -> None:
+        self.reason_code = reason_code
+        super().__init__("extension resource accounting preflight failed")
+
+
 @dataclass
 class RequestContext:
     """Mutable request ledger shared by every nested backend operation."""
@@ -97,10 +107,27 @@ class RequestContext:
     endpoints: set[str] = field(default_factory=set)
     backends: set[str] = field(default_factory=set)
     model_accesses: list[dict[str, Any]] = field(default_factory=list)
-    _output_reservations: list[int] = field(default_factory=list, repr=False)
+    _output_reservations: dict[int, list[int]] = field(default_factory=dict, repr=False)
     cancelled: bool = False
     deadline_exceeded: bool = False
     _lock: RLock = field(default_factory=RLock, repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self.max_remote_calls) is not int or self.max_remote_calls < 0:
+            raise ValueError("request remote-call limit must be a non-negative integer")
+        if type(self.max_output_tokens) is not int or self.max_output_tokens < 1:
+            raise ValueError("request output-token limit must be a positive integer")
+        if (
+            type(self.deadline) not in (int, float)
+            or not math.isfinite(float(self.deadline))
+            or self.deadline <= 0
+        ):
+            raise ValueError("request deadline must be a finite positive monotonic time")
+        if (
+            type(self.allow_remote_processing) is not bool
+            or type(self.allow_model_download) is not bool
+        ):
+            raise TypeError("request consent flags must be boolean")
 
     @classmethod
     def from_config(
@@ -135,8 +162,12 @@ class RequestContext:
         Providers that report usage make this exact. Providers without usage are
         still bounded per call and transparently reported as unmetered.
         """
+        if requested is not None and (type(requested) is not int or requested < 1):
+            raise ResourceBudgetExceeded("request output-token budget exhausted")
         with self._lock:
-            committed = self.completion_tokens + sum(self._output_reservations)
+            committed = self.completion_tokens + sum(
+                sum(reservations) for reservations in self._output_reservations.values()
+            )
             remaining = max(0, self.max_output_tokens - committed)
         if remaining < 1:
             raise ResourceBudgetExceeded("request output-token budget exhausted")
@@ -148,12 +179,18 @@ class RequestContext:
 
     def reserve_output_tokens(self, requested: int) -> int:
         """Reserve a conservative generation ceiling until usage reconciles it."""
-        allowed = self.remaining_output_tokens(requested)
-        if allowed < 1:
+        self.checkpoint()
+        if type(requested) is not int or requested < 1:
             raise ResourceBudgetExceeded("request output-token budget exhausted")
         with self._lock:
-            self._output_reservations.append(allowed)
-        return allowed
+            committed = self.completion_tokens + sum(
+                sum(reservations) for reservations in self._output_reservations.values()
+            )
+            allowed = min(requested, max(0, self.max_output_tokens - committed))
+            if allowed < 1:
+                raise ResourceBudgetExceeded("request output-token budget exhausted")
+            self._output_reservations.setdefault(get_ident(), []).append(allowed)
+            return allowed
 
     def before_remote_call(self, url: str, backend: str, body: Mapping[str, Any]) -> None:
         """Reserve one physical HTTP attempt and record only privacy-safe metadata."""
@@ -182,12 +219,19 @@ class RequestContext:
                     f"remote-call budget exhausted ({self.max_remote_calls})"
                 )
             maximum = body.get("max_tokens")
-            if isinstance(maximum, (int, float)) and maximum > 0:
-                committed = self.completion_tokens + sum(self._output_reservations)
-                allowed = min(int(maximum), max(0, self.max_output_tokens - committed))
-                if allowed < int(maximum):
-                    raise ResourceBudgetExceeded("request output-token budget exhausted")
-                self._output_reservations.append(allowed)
+            if type(maximum) in (int, float):
+                numeric_maximum = cast(float, maximum)
+                if math.isfinite(numeric_maximum) and numeric_maximum > 0:
+                    committed = self.completion_tokens + sum(
+                        sum(reservations) for reservations in self._output_reservations.values()
+                    )
+                    allowed = min(
+                        int(numeric_maximum),
+                        max(0, self.max_output_tokens - committed),
+                    )
+                    if allowed < int(numeric_maximum):
+                        raise ResourceBudgetExceeded("request output-token budget exhausted")
+                    self._output_reservations.setdefault(get_ident(), []).append(allowed)
             # Commit accounting only after every budget check succeeds. A call
             # rejected here never reached the network and is not a physical attempt.
             self.remote_calls += 1
@@ -201,30 +245,52 @@ class RequestContext:
             prompt = usage.get("prompt_tokens")
             completion = usage.get("completion_tokens")
             total = usage.get("total_tokens")
-            if isinstance(prompt, (int, float)) and prompt >= 0:
-                self.prompt_tokens += int(prompt)
-            if isinstance(completion, (int, float)) and completion >= 0:
-                if self._output_reservations:
-                    self._output_reservations.pop(0)
-                self.completion_tokens += int(completion)
-            if isinstance(total, (int, float)) and total >= 0:
-                self.total_tokens += int(total)
+            numeric_prompt = cast(float, prompt)
+            if (
+                type(prompt) in (int, float)
+                and math.isfinite(numeric_prompt)
+                and numeric_prompt >= 0
+            ):
+                self.prompt_tokens += int(numeric_prompt)
+            numeric_completion = cast(float, completion)
+            if (
+                type(completion) in (int, float)
+                and math.isfinite(numeric_completion)
+                and numeric_completion >= 0
+            ):
+                reservations = self._output_reservations.get(get_ident(), [])
+                if reservations:
+                    reservations.pop(0)
+                if not reservations:
+                    self._output_reservations.pop(get_ident(), None)
+                self.completion_tokens += int(numeric_completion)
+            numeric_total = cast(float, total)
+            if type(total) in (int, float) and math.isfinite(numeric_total) and numeric_total >= 0:
+                self.total_tokens += int(numeric_total)
 
     def reconcile_local_generation(self, actual_tokens: int) -> None:
         """Replace the oldest local reservation with an observed token count."""
         with self._lock:
-            if self._output_reservations:
-                self._output_reservations.pop(0)
+            reservations = self._output_reservations.get(get_ident(), [])
+            if reservations:
+                reservations.pop(0)
+            if not reservations:
+                self._output_reservations.pop(get_ident(), None)
             self.completion_tokens += max(0, int(actual_tokens))
 
     def release_latest_output_reservation(self) -> None:
         """Release a reservation after a definitive no-completion HTTP response."""
         with self._lock:
-            if self._output_reservations:
-                self._output_reservations.pop()
+            reservations = self._output_reservations.get(get_ident(), [])
+            if reservations:
+                reservations.pop()
+            if not reservations:
+                self._output_reservations.pop(get_ident(), None)
 
     def record_model_access(self, model: str, *, cached: bool, download_allowed: bool) -> None:
         """Record a hashed model identifier, never a potentially private path."""
+        if type(model) is not str:
+            raise TypeError("model identifier must be a string")
         digest = hashlib.sha256(model.encode("utf-8", "replace")).hexdigest()
         with self._lock:
             self.model_accesses.append(
@@ -250,7 +316,9 @@ class RequestContext:
                     "completion_tokens": self.completion_tokens,
                     "total_tokens": self.total_tokens,
                     "completion_token_limit": self.max_output_tokens,
-                    "completion_tokens_reserved": sum(self._output_reservations),
+                    "completion_tokens_reserved": sum(
+                        sum(reservations) for reservations in self._output_reservations.values()
+                    ),
                     "usage_reports": self.usage_reports,
                     "remote_calls_without_reported_usage": max(
                         0, self.remote_calls - self.usage_reports
@@ -269,6 +337,79 @@ _CURRENT: ContextVar[Optional[RequestContext]] = ContextVar(
 
 def current_request_context() -> Optional[RequestContext]:
     return _CURRENT.get()
+
+
+def extension_usage_snapshot() -> tuple[Optional[RequestContext], int, int]:
+    """Capture content-free resource counters before invoking an extension."""
+    context = current_request_context()
+    if context is None:
+        return None, 0, 0
+    ledger = context.ledger()
+    return context, int(ledger["remote_calls_used"]), len(ledger["model_accesses"])
+
+
+def extension_resource_accounting(capability: Any) -> str:
+    """Resolve a validated accounting contract from a static capability.
+
+    Network use always requires parent-ledger accounting. A capability that may
+    acquire a model defaults to model accounting unless it declares a stricter
+    policy. Pure, dependency-free extensions may explicitly or implicitly use
+    ``none``.
+    """
+    network_required = getattr(capability, "network_required", None)
+    download_possible = getattr(capability, "model_download_possible", None)
+    metadata = getattr(capability, "metadata", None)
+    if type(network_required) is not bool or type(download_possible) is not bool:
+        raise TypeError("extension capability resource flags must be boolean")
+    if type(metadata) is not dict:
+        raise TypeError("extension capability metadata must be a literal dictionary")
+    default = "model" if download_possible else "none"
+    accounting = metadata.get("resource_accounting", default)
+    if type(accounting) is not str or accounting not in {"none", "model", "network"}:
+        raise TypeError("extension resource_accounting must be none, model, or network")
+    if network_required:
+        return "network"
+    if download_possible and accounting == "none":
+        return "model"
+    return accounting
+
+
+def begin_extension_usage(
+    capability: Any,
+) -> tuple[tuple[Optional[RequestContext], int, int], str]:
+    """Fail before extension execution when its declared budget is unavailable."""
+    accounting = extension_resource_accounting(capability)
+    snapshot = extension_usage_snapshot()
+    if accounting == "none":
+        return snapshot, accounting
+    context = snapshot[0]
+    if context is None:
+        raise ExtensionUsageRejected("request_context_required")
+    context.checkpoint()
+    if accounting == "network" and context.remaining_remote_calls() < 1:
+        raise ResourceBudgetExceeded(f"remote-call budget exhausted ({context.max_remote_calls})")
+    return snapshot, accounting
+
+
+def extension_usage_error(
+    snapshot: tuple[Optional[RequestContext], int, int],
+    *,
+    network_required: bool,
+    resource_accounting: str,
+) -> Optional[str]:
+    """Return a reason code when declared extension work bypassed the ledger."""
+    accounting = "network" if network_required else resource_accounting
+    if accounting == "none":
+        return None
+    context, calls_before, models_before = snapshot
+    if context is None:
+        return "request_context_required"
+    ledger = context.ledger()
+    if accounting == "network" and int(ledger["remote_calls_used"]) <= calls_before:
+        return "remote_usage_not_accounted"
+    if accounting == "model" and len(ledger["model_accesses"]) <= models_before:
+        return "model_usage_not_accounted"
+    return None
 
 
 @contextmanager

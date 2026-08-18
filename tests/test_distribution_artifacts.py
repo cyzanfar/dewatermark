@@ -18,12 +18,37 @@ SKILL_FILES = {
     "agents/openai.yaml",
 }
 SCHEMA_FILES = {
+    "benchmark-evidence-bundle-v1.json",
+    "benchmark-observation-set-v1.json",
+    "benchmark-replication-record-v1.json",
+    "benchmark-sample-registry-v1.json",
     "command-detector-protocol-v1.json",
     "detector-capability-v1.json",
     "evidence-receipt-v1.json",
+    "openapi-v1.json",
     "removal-result-v1.json",
 }
-FORBIDDEN_PARTS = {".env", ".git", "__pycache__", ".DS_Store"}
+ADAPTER_PACK_FILES = {
+    "kgw/adapter.py",
+    "kgw/adapter-config.json",
+    "kgw/capability.json",
+    "kgw/conformance.py",
+    "kgw/fixture-cases.json",
+    "kgw/README.md",
+    "synthid/adapter-manifest.template.json",
+    "synthid/README.md",
+}
+FORBIDDEN_PARTS = {
+    ".DS_Store",
+    ".env",
+    ".git",
+    ".gradle",
+    ".intellijPlatform",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+}
+FORBIDDEN_FILENAMES = {"dewatermark.sarif", "progress.jsonl", "results.json", "results.md"}
 
 
 def _dist_dir() -> Path:
@@ -43,6 +68,7 @@ def _assert_safe_members(names: list[str]) -> None:
         assert not path.is_absolute(), f"absolute archive member: {name}"
         assert ".." not in path.parts, f"traversal archive member: {name}"
         assert not FORBIDDEN_PARTS.intersection(path.parts), f"forbidden archive member: {name}"
+        assert path.name not in FORBIDDEN_FILENAMES, f"generated result in distribution: {name}"
         assert not name.endswith((".pyc", ".pyo")), f"bytecode in distribution: {name}"
 
 
@@ -60,6 +86,13 @@ def test_wheel_contains_agent_skill_and_declared_extras() -> None:
             name.removeprefix(schema_prefix) for name in names if name.startswith(schema_prefix)
         }
         assert SCHEMA_FILES <= packaged_schemas
+        adapter_prefix = "dewatermark/data/adapters/"
+        packaged_adapters = {
+            name.removeprefix(adapter_prefix) for name in names if name.startswith(adapter_prefix)
+        }
+        assert ADAPTER_PACK_FILES <= packaged_adapters
+        assert "dewatermark/data/reference-detector-vectors-v1.json" in names
+        assert "dewatermark/py.typed" in names
         metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
         assert len(metadata_names) == 1
         metadata = archive.read(metadata_names[0]).decode("utf-8")

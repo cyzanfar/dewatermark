@@ -1,3 +1,4 @@
 User-agent: *
 Allow: /
+
 Sitemap: https://cyzanfar.github.io/text-watermark-remover/sitemap.xml

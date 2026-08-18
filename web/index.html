@@ -1,20 +1,235 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>AI Text Watermark Remover — Free Unicode Inspector | dewatermark</title>
-  <meta name="description" content="Inspect and remove invisible Unicode text watermarks locally in your browser. Open-source Python API, CLI, SARIF scanner, HTTP API, and MCP server.">
-  <meta name="keywords" content="text watermark remover, AI watermark remover, LLM watermark remover, Unicode watermark detector">
-  <meta property="og:title" content="dewatermark — open-source AI text watermark remover"><meta property="og:description" content="Find and remove hidden Unicode artifacts locally. No text leaves your browser.">
-  <link rel="canonical" href="https://cyzanfar.github.io/text-watermark-remover/"><link rel="stylesheet" href="styles.css">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"dewatermark","applicationCategory":"DeveloperApplication","operatingSystem":"Any","isAccessibleForFree":true,"codeRepository":"https://github.com/cyzanfar/text-watermark-remover","description":"AI text watermark remover for Unicode artifacts, with detector-backed evaluation of statistical LLM watermarks."}</script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Text Watermark Remover for AI &amp; LLM Text | dewatermark</title>
+  <meta name="description" content="Open-source text watermark remover and assurance toolkit. Inspect and clean hidden Unicode artifacts locally, scan repositories, and evaluate statistical LLM watermarks with named detectors.">
+  <meta name="keywords" content="text watermark remover, AI text watermark remover, LLM watermark remover, hidden Unicode detector, Claude watermark, SynthID text, statistical watermark detector">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <meta name="theme-color" content="#090b12">
+  <link rel="canonical" href="https://cyzanfar.github.io/text-watermark-remover/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="dewatermark — evidence-first text watermark removal">
+  <meta property="og:description" content="Clean hidden Unicode artifacts locally and evaluate statistical watermark mitigation with named detectors and quality gates.">
+  <meta property="og:url" content="https://cyzanfar.github.io/text-watermark-remover/">
+  <meta property="og:image" content="https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/assets/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="dewatermark text watermark assurance toolkit">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="dewatermark — text watermark remover and assurance toolkit">
+  <meta name="twitter:description" content="Private Unicode cleanup, detector-scoped statistical evaluation, and agent-ready assurance workflows.">
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="dewatermark text watermark assurance toolkit">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareSourceCode",
+        "name": "dewatermark",
+        "description": "Open-source text watermark remover for Unicode artifacts with detector-backed evaluation of statistical LLM watermarks.",
+        "codeRepository": "https://github.com/cyzanfar/text-watermark-remover",
+        "programmingLanguage": ["Python", "JavaScript", "Java"],
+        "softwareVersion": "0.6.0 release candidate",
+        "license": "https://opensource.org/license/mit",
+        "runtimePlatform": "Python 3.9+",
+        "keywords": "text watermark remover, LLM watermark, Unicode security, AI agents"
+      },
+      {
+        "@type": "WebApplication",
+        "name": "dewatermark Unicode Inspector",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Any",
+        "isAccessibleForFree": true,
+        "browserRequirements": "Modern browser with JavaScript enabled",
+        "featureList": "Local Unicode inspection, context-aware sanitation, edit reporting"
+      },
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Can this remove every AI text watermark?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. It deterministically handles covered Unicode artifacts. A statistical-removal result is only verified when a compatible named detector clears the candidate and configured quality gates pass."}
+          },
+          {
+            "@type": "Question",
+            "name": "Does pasted text leave the browser?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. The browser playground performs Unicode inspection and safe cleanup entirely in the current browser tab."}
+          },
+          {
+            "@type": "Question",
+            "name": "Does this claim to remove Anthropic Claude watermarks?",
+            "acceptedAnswer": {"@type": "Answer", "text": "No. Anthropic confirms embedded marking for supported models but has not published the technical detector guidance needed for independent verification. The toolkit returns an unsupported detection outcome and records unsupported-pending-specification capability metadata."}
+          }
+        ]
+      }
+    ]
+  }
+  </script>
 </head>
-<body><main>
-  <p class="eyebrow">Open source · local first · agent ready</p>
-  <h1>See the characters hiding in your text.</h1>
-  <p class="lead">A free, private Unicode watermark inspector powered by <strong>dewatermark</strong>. The browser tool uses deterministic safe cleanup; the Python package adds forensic reports, repository scanning, and quality-constrained statistical mitigation.</p>
-  <div class="actions"><button class="primary" id="sample">Load hidden sample</button><a class="button" href="https://github.com/cyzanfar/text-watermark-remover">View on GitHub ↗</a><a class="button" href="https://pypi.org/project/dewatermark/">pip install dewatermark ↗</a></div>
-  <div class="grid"><section><label for="input">Input</label><textarea id="input" placeholder="Paste text here…"></textarea><button id="clean">Inspect and clean</button></section><section><label for="output">Clean output</label><textarea id="output" readonly></textarea><button id="copy">Copy result</button></section></div>
-  <section style="margin-top:1rem"><p id="summary"></p><ul id="findings"></ul><p class="note">Scope: deterministic Unicode artifacts only. This page does not claim to detect or remove private vendor marks—including Claude's confirmed but not yet technically documented text marking—or statistical schemes.</p></section>
-  <footer>MIT licensed · Your text never leaves this page · <a href="https://github.com/cyzanfar/text-watermark-remover/security">Security</a></footer>
-</main><script type="module" src="app.js"></script></body></html>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="dewatermark home"><span aria-hidden="true">◫</span> dewatermark</a>
+    <nav aria-label="Main navigation">
+      <a href="#playground">Playground</a>
+      <a href="research.html">Research</a>
+      <a href="https://github.com/cyzanfar/text-watermark-remover/tree/main/docs">Docs</a>
+      <a class="nav-cta" href="https://github.com/cyzanfar/text-watermark-remover">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <p class="release-banner"><strong>Release candidate:</strong> this site
+  documents unreleased v0.6 source. PyPI currently serves the latest stable
+  release; install the source command below to use the features shown here.</p>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <div>
+        <p class="eyebrow">Open source · local first · evidence scoped</p>
+        <h1 id="hero-title">A text watermark remover that tells you what it can prove.</h1>
+        <p class="lead">Find and clean hidden Unicode artifacts locally. For statistical LLM watermarks, run named detectors, quality-gated transformations, and reproducible inspect → plan → apply → verify workflows.</p>
+        <div class="actions">
+          <a class="button primary" href="#playground">Inspect text locally</a>
+          <a class="button" href="https://github.com/cyzanfar/text-watermark-remover">Read the source ↗</a>
+        </div>
+        <div class="install" aria-label="Installation command">
+          <code id="install-command">pip install "git+https://github.com/cyzanfar/text-watermark-remover.git"</code>
+          <button class="copy-small" data-copy-target="install-command">Copy</button>
+        </div>
+      </div>
+      <aside class="receipt-card" aria-label="Example assurance receipt excerpt">
+        <p class="terminal-label">evidence receipt excerpt</p>
+        <pre><code>{
+  "detection": "detected",
+  "transformation": "unicode_sanitized",
+  "verification": "verified_cleared",
+  "detector": "unicode-artifacts-v1",
+  "changed": true
+}</code></pre>
+        <p>No authorship guess. No universal “clean” badge.</p>
+      </aside>
+    </section>
+
+    <ul class="trust-strip" aria-label="Project guarantees">
+      <li><strong>Local by default</strong><span>No text upload or model download without opt-in</span></li>
+      <li><strong>Fail closed</strong><span>Unsupported and insufficient evidence stay explicit</span></li>
+      <li><strong>Cross-runtime</strong><span>Python and JavaScript share golden Unicode behavior</span></li>
+      <li><strong>Agent ready</strong><span>CLI, JSON, OpenAPI, MCP, schemas, and receipts</span></li>
+    </ul>
+
+    <section id="playground" class="playground" aria-labelledby="playground-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Private browser tool</p>
+          <h2 id="playground-title">See the characters hiding in your text.</h2>
+        </div>
+        <button class="button" id="sample">Load hidden sample</button>
+      </div>
+      <div class="editor-grid">
+        <div class="editor-panel">
+          <label for="input">Input <span id="input-count">0 characters</span></label>
+          <textarea id="input" spellcheck="false" placeholder="Paste text here…"></textarea>
+          <button class="primary" id="clean">Inspect and clean</button>
+        </div>
+        <div class="editor-panel">
+          <label for="output">Safe-profile output</label>
+          <textarea id="output" readonly></textarea>
+          <button id="copy">Copy result</button>
+        </div>
+      </div>
+      <div class="results" aria-live="polite">
+        <p id="summary">Paste text to begin. Processing stays in this browser.</p>
+        <ul id="findings"><li>No suspicious Unicode found.</li></ul>
+      </div>
+      <p class="scope-note"><strong>Scope:</strong> this playground handles literal Unicode artifacts only. It does not identify authorship or claim to remove private, retrieval-based, semantic, or undisclosed statistical marks.</p>
+      <noscript><p class="scope-note">JavaScript is required for the local playground. The Python CLI remains available from PyPI.</p></noscript>
+    </section>
+
+    <section class="outcomes" aria-labelledby="outcomes-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Precise outcomes</p>
+          <h2 id="outcomes-title">“Changed” is not the same as “verified.”</h2>
+        </div>
+        <a href="https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/ASSURANCE.md">Assurance model ↗</a>
+      </div>
+      <div class="card-grid">
+        <article><span class="status good">verified</span><h3>Unicode sanitized</h3><p>Covered literal artifacts were removed under a versioned, context-aware policy.</p></article>
+        <article><span class="status good">detector scoped</span><h3>Mitigation verified</h3><p>A compatible named detector was positive before, cleared after, and every required quality gate passed.</p></article>
+        <article><span class="status caution">no proof</span><h3>Mitigation unverified</h3><p>The candidate changed and passed gates, but compatible independent verification was unavailable.</p></article>
+        <article><span class="status neutral">abstained</span><h3>Unsupported scheme</h3><p>The requested private or incompatible watermark cannot currently be tested. Source text is retained.</p></article>
+      </div>
+    </section>
+
+    <section class="developer" aria-labelledby="developer-title">
+      <p class="eyebrow">One engine, many workflows</p>
+      <h2 id="developer-title">Built for developers and AI agents.</h2>
+      <div class="code-grid">
+        <article><h3>Python</h3><pre><code>import dewatermark
+
+result = dewatermark.remove(
+    text, mode="sanitize"
+)
+print(result.receipt.claim_scope)</code></pre></article>
+        <article><h3>Two-phase agents</h3><pre><code>dewatermark inspect --input text.txt
+dewatermark plan --input text.txt \
+  --mode sanitize
+dewatermark apply --input text.txt \
+  --plan-digest SHA256 --consent</code></pre></article>
+        <article><h3>JavaScript</h3><pre><code>import { sanitizeText } from
+  "./sanitizer.mjs";
+
+const clean = sanitizeText(text);</code></pre></article>
+        <article><h3>Repository scanner</h3><pre><code>dewatermark check .
+dewatermark check . --format sarif \
+  --output dewatermark.sarif
+
+# .dewatermark.toml supported</code></pre></article>
+      </div>
+      <div class="integration-links">
+        <a href="https://pypi.org/project/dewatermark/">PyPI</a>
+        <a href="https://github.com/cyzanfar/text-watermark-remover/tree/main/skills">Agent skill</a>
+        <a href="https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/CLIENTS.md">OpenAPI clients</a>
+        <a href="https://github.com/cyzanfar/text-watermark-remover/tree/main/integrations">Editor integrations</a>
+        <a href="https://github.com/cyzanfar/text-watermark-remover/blob/main/ROADMAP.md">Release status</a>
+      </div>
+    </section>
+
+    <section class="research" aria-labelledby="research-title">
+      <div>
+        <p class="eyebrow">Research, not wishful thinking</p>
+        <h2 id="research-title">Watermarks are different mechanisms with different detectors.</h2>
+        <p>Invisible Unicode, green-list token bias, distortion-free sampling, tournament scoring, semantic marks, and provider-side retrieval are not interchangeable. dewatermark records the scheme, detector, threshold, effective length, quality policy, and evidence scope instead of collapsing them into one claim.</p>
+        <a class="button" href="research.html">Read the research map</a>
+      </div>
+      <div class="boundary-list">
+        <p><strong>Claude:</strong> confirmed marking for supported models; public technical detector guidance is still forthcoming.</p>
+        <p><strong>SynthID Text:</strong> public reference research exists; a reference configuration is not proof about every production surface.</p>
+        <p><strong>Retrieval provenance:</strong> a provider-held copy cannot be removed from the submitted text.</p>
+        <p><strong>Short text:</strong> many statistical tests must abstain when there are too few effective detector tokens.</p>
+      </div>
+    </section>
+
+    <section class="faq" aria-labelledby="faq-title">
+      <p class="eyebrow">Questions</p>
+      <h2 id="faq-title">What a trustworthy text watermark remover should say.</h2>
+      <details><summary>Can this remove every AI text watermark?</summary><p>No. Unicode sanitation is deterministic for covered artifacts. Statistical support is detector-specific, and private or unknown schemes remain unsupported rather than being declared clean.</p></details>
+      <details><summary>Does my pasted text leave the browser?</summary><p>No. The playground imports a dependency-free JavaScript sanitizer and performs every operation in the current tab. It has no upload endpoint.</p></details>
+      <details><summary>Does it remove an Anthropic Claude watermark?</summary><p>It makes no such claim. Anthropic has confirmed marking on supported newer models, while public technical detection details remain forthcoming. dewatermark therefore returns an <code>unsupported</code> detection outcome and records capability metadata status <code>unsupported_pending_spec</code>.</p></details>
+      <details><summary>Why use a detector after rewriting?</summary><p>A rewrite may alter wording without changing a detector decision—or may damage meaning. Verification requires a compatible detector plus semantic, factual, structural, and protected-span quality gates.</p></details>
+    </section>
+  </main>
+
+  <footer>
+    <div><a class="brand" href="./"><span aria-hidden="true">◫</span> dewatermark</a><p>MIT-licensed text watermark assurance infrastructure.</p></div>
+    <div><a href="https://github.com/cyzanfar/text-watermark-remover">GitHub</a><a href="https://pypi.org/project/dewatermark/">PyPI</a><a href="research.html">Research</a><a href="https://github.com/cyzanfar/text-watermark-remover/security">Security</a></div>
+  </footer>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

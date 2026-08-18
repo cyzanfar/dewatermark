@@ -22,8 +22,13 @@ DEFAULT_EXTENSIONS = frozenset(
 SKIP_DIRS = frozenset(
     {
         ".git",
+        ".gradle",
         ".hg",
+        ".hypothesis",
+        ".idea",
+        ".intellijPlatform",
         ".mypy_cache",
+        ".next",
         ".pytest_cache",
         ".ruff_cache",
         ".tox",
@@ -39,9 +44,42 @@ SKIP_DIRS = frozenset(
 # but they are too ambiguous to fail a repository check by default. Callers can
 # opt into them explicitly; the default is limited to actionable evidence.
 DEFAULT_DISPOSITIONS = frozenset({"actionable"})
+_VALID_DISPOSITIONS = frozenset({"actionable", "contextual", "informational"})
+_PRIVATE_CONFIGURATION_KEYS = frozenset(
+    {
+        "api_key",
+        "authorization",
+        "credential",
+        "password",
+        "private_key",
+        "secret",
+        "token",
+    }
+)
 
 
-@dataclass(frozen=True)
+def _public_configuration(value: object, *, key: str = "") -> object:
+    """Project scanner policy without reflecting credentials or objects."""
+    normalized = key.lower().replace("-", "_")
+    if normalized in _PRIVATE_CONFIGURATION_KEYS or normalized.endswith(
+        ("_api_key", "_credential", "_password", "_private_key", "_secret", "_token")
+    ):
+        return "<redacted>"
+    value_type = type(value)
+    if value_type is dict and isinstance(value, dict):
+        return {
+            item_key: _public_configuration(item, key=item_key)
+            for item_key, item in value.items()
+            if type(item_key) is str
+        }
+    if value_type in (list, tuple) and isinstance(value, (list, tuple)):
+        return [_public_configuration(item) for item in value]
+    if value is None or value_type in (str, bool, int, float):
+        return value
+    return "<redacted>"
+
+
+@dataclass(frozen=True, repr=False)
 class ScanFinding:
     path: str
     line: int
@@ -58,11 +96,14 @@ class ScanFinding:
     fingerprint: str = ""
     baseline_state: str = "new"
 
+    def __repr__(self) -> str:
+        return "<dewatermark scan finding; path and context redacted>"
+
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ScanEdit:
     """An accepted file edit, sufficient to audit or reconstruct changed codepoints."""
 
@@ -84,17 +125,24 @@ class ScanEdit:
     accepted: bool = True
     reversible: bool = True
 
+    def __repr__(self) -> str:
+        return "<dewatermark scan edit; path and content redacted>"
+
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ScanReport:
     files_scanned: int
     findings: tuple[ScanFinding, ...]
     errors: tuple[str, ...] = ()
     edits: tuple[ScanEdit, ...] = ()
     fixed_files: tuple[str, ...] = ()
+    configuration: Optional[Mapping[str, object]] = None
+
+    def __repr__(self) -> str:
+        return "<dewatermark scan report; paths and policy redacted>"
 
     def to_dict(self) -> dict:
         return {
@@ -106,14 +154,74 @@ class ScanReport:
             "edits": [item.to_dict() for item in self.edits],
             "fixed_files": list(self.fixed_files),
             "unicode_policy_version": UNICODE_POLICY_VERSION,
+            "configuration": _public_configuration(
+                self.configuration if type(self.configuration) is dict else {}
+            ),
         }
 
 
-def _iter_files(paths: Sequence[Path]) -> Iterator[Path]:
+def _normalized_path_candidates(path: Path, root: Path) -> tuple[str, ...]:
+    """Return stable path spellings used by scanner exclusion patterns."""
+    values = {path.name, path.as_posix()}
+    for base in (root, Path.cwd()):
+        try:
+            values.add(path.resolve().relative_to(base.resolve()).as_posix())
+        except ValueError:
+            pass
+    return tuple(sorted(values))
+
+
+def _normalize_exclude_pattern(raw_pattern: str) -> str:
+    pattern = raw_pattern.strip().replace("\\", "/")
+    return pattern[2:] if pattern.startswith("./") else pattern
+
+
+def _is_excluded(path: Path, root: Path, patterns: Collection[str]) -> bool:
+    candidates = _normalized_path_candidates(path, root)
+    for raw_pattern in patterns:
+        pattern = _normalize_exclude_pattern(raw_pattern)
+        if not pattern:
+            continue
+        if any(
+            fnmatch.fnmatchcase(candidate, pattern)
+            or fnmatch.fnmatchcase(candidate, f"**/{pattern}")
+            for candidate in candidates
+        ):
+            return True
+    return False
+
+
+def path_is_selected(
+    path: str | Path,
+    *,
+    root: str | Path,
+    exclude_patterns: Collection[str] = (),
+    extensions: Collection[str] = DEFAULT_EXTENSIONS,
+) -> bool:
+    """Apply repository extension/exclusion policy to an in-memory file path."""
+    candidate = Path(path)
+    normalized_extensions = frozenset(
+        value.lower() if value.startswith(".") else f".{value.lower()}" for value in extensions
+    )
+    return candidate.suffix.lower() in normalized_extensions and not _is_excluded(
+        candidate, Path(root), exclude_patterns
+    )
+
+
+def _iter_files(
+    paths: Sequence[Path],
+    *,
+    exclude_patterns: Collection[str] = (),
+    extensions: Collection[str] = DEFAULT_EXTENSIONS,
+    policy_root: Optional[Path] = None,
+) -> Iterator[Path]:
     seen: set[Path] = set()
     for source in paths:
+        root = policy_root or (source if source.is_dir() else source.parent)
         if source.is_file() and not source.is_symlink():
-            candidates: Iterable[Path] = (source,)
+            candidates: Iterable[Path] = (
+                () if _is_excluded(source, root, exclude_patterns) else (source,)
+            )
         elif source.is_dir():
             candidates = (
                 item
@@ -121,7 +229,8 @@ def _iter_files(paths: Sequence[Path]) -> Iterator[Path]:
                 if item.is_file()
                 and not item.is_symlink()
                 and not any(part in SKIP_DIRS for part in item.parts)
-                and item.suffix.lower() in DEFAULT_EXTENSIONS
+                and item.suffix.lower() in extensions
+                and not _is_excluded(item, root, exclude_patterns)
             )
         else:
             continue
@@ -185,6 +294,12 @@ def scan_text(
     those values.  Informational observations are available by passing all
     three dispositions explicitly.
     """
+    if type(text) is not str:
+        raise TypeError("scanner text must be a string")
+    if isinstance(dispositions, str) or isinstance(suppressions, str) or isinstance(baseline, str):
+        raise TypeError("scanner policies must be collections, not strings")
+    if not dispositions or not set(dispositions) <= _VALID_DISPOSITIONS:
+        raise ValueError("scanner dispositions must contain supported values")
     baseline_values = baseline or frozenset()
     findings: list[ScanFinding] = []
     for group in analyze(text)["unicode"]["findings"]:
@@ -353,6 +468,9 @@ def scan_paths(
     changed_lines: Optional[Mapping[str, Collection[int]]] = None,
     dispositions: Collection[str] = DEFAULT_DISPOSITIONS,
     new_only: bool = False,
+    exclude_patterns: Collection[str] = (),
+    extensions: Collection[str] = DEFAULT_EXTENSIONS,
+    policy_root: Optional[str | Path] = None,
 ) -> ScanReport:
     """Scan text files recursively and optionally apply atomic, audited fixes.
 
@@ -360,17 +478,51 @@ def scan_paths(
     BOM and all original CR/LF sequences.  Conservative fixes disable implicit
     NFC normalization so every byte change corresponds to a reported edit.
     """
+    if isinstance(paths, (str, Path)):
+        raise TypeError("scanner paths must be a sequence")
+    if any(
+        isinstance(value, str)
+        for value in (extensions, dispositions, exclude_patterns, suppressions, baseline)
+    ):
+        raise TypeError("scanner policies must be collections, not strings")
+    if type(max_file_bytes) is not int or not 1 <= max_file_bytes <= 1_000_000_000:
+        raise ValueError("max_file_bytes must be between 1 and 1000000000")
+    if type(fix) is not bool or type(new_only) is not bool:
+        raise TypeError("scanner fix and new_only policies must be boolean")
+    if profile not in {"safe", "aggressive"}:
+        raise ValueError("scanner profile must be safe or aggressive")
+    if not dispositions or not set(dispositions) <= _VALID_DISPOSITIONS:
+        raise ValueError("scanner dispositions must contain supported values")
+    if not extensions or any(type(value) is not str or not value.strip() for value in extensions):
+        raise ValueError("scanner extensions must contain non-empty strings")
+    if any(type(value) is not str for value in (*exclude_patterns, *suppressions)):
+        raise TypeError("scanner exclude and suppression values must be strings")
     findings: list[ScanFinding] = []
     errors: list[str] = []
     edits: list[ScanEdit] = []
     fixed_files: list[str] = []
     count = 0
-    for path in _iter_files([Path(value) for value in paths]):
+    normalized_extensions = frozenset(
+        value.lower() if value.startswith(".") else f".{value.lower()}" for value in extensions
+    )
+    for path in _iter_files(
+        [Path(value) for value in paths],
+        exclude_patterns=exclude_patterns,
+        extensions=normalized_extensions,
+        policy_root=Path(policy_root) if policy_root is not None else None,
+    ):
         try:
+            if path.is_symlink():
+                continue
             metadata = path.stat()
+            if not stat.S_ISREG(metadata.st_mode):
+                continue
             if metadata.st_size > max_file_bytes:
                 continue
-            raw = path.read_bytes()
+            with path.open("rb") as handle:
+                raw = handle.read(max_file_bytes + 1)
+            if len(raw) > max_file_bytes:
+                continue
             text = raw.decode("utf-8")
             count += 1
             path_changed_lines: Optional[Collection[int]] = None
@@ -419,6 +571,20 @@ def scan_paths(
         tuple(errors),
         edits=tuple(edits),
         fixed_files=tuple(fixed_files),
+        configuration={
+            "max_file_bytes": max_file_bytes,
+            "fix": fix,
+            "profile": profile,
+            "new_only": new_only,
+            "extensions": sorted(normalized_extensions),
+            "exclude_patterns": sorted(
+                _normalize_exclude_pattern(item) for item in exclude_patterns
+            ),
+            "dispositions": sorted(dispositions),
+            "suppression_count": len(suppressions),
+            "baseline_count": len(baseline or ()),
+            "diff_filter": changed_lines is not None,
+        },
     )
 
 

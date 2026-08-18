@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from importlib.util import find_spec
+import sys
 from typing import Any, Optional
 
 from .config import DewatermarkConfig, assert_remote_allowed, resolve
@@ -17,7 +18,7 @@ from .providers import (
     provider_manifest,
 )
 from .request_context import current_request_context
-from .scoring import cache_info, model_cached
+from .scoring import cache_info, model_loaded
 
 logger = logging.getLogger(__name__)
 _PARAPHRASE_CALLS = (1, 2, 3, 1, 1, 1, 1)
@@ -35,12 +36,8 @@ def emit(config: DewatermarkConfig, event: str, **payload: Any) -> None:
     if config.event_handler:
         try:
             config.event_handler({"event": event, "schema_version": SCHEMA_VERSION, **payload})
-        except Exception as exc:
-            logger.warning(
-                "dewatermark event handler failed for %s (%s); details redacted",
-                event,
-                type(exc).__name__,
-            )
+        except Exception:
+            logger.warning("dewatermark event handler failed; details redacted")
 
 
 def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
@@ -92,9 +89,15 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "unicode": True,
-        "local_dependencies": bool(find_spec("torch") and find_spec("transformers")),
-        "local_model": cfg.local_lm,
-        "local_model_cached": model_cached(cfg.local_lm),
+        # Discovery deliberately observes already-loaded state only. Probing
+        # module finders or model caches can execute user hooks or touch model
+        # storage, both forbidden at this boundary.
+        "local_dependencies": "torch" in sys.modules and "transformers" in sys.modules,
+        "dependency_probe": "loaded_modules_only",
+        "local_model": "sha256:"
+        + hashlib.sha256(cfg.local_lm.encode("utf-8", "replace")).hexdigest(),
+        "local_model_cached": model_loaded(cfg.local_lm),
+        "local_model_cache_probe": "in_process_only",
         "loaded_models": cache_info()["models"],
         "model_download_allowed": cfg.allow_model_download,
         "remote_processing_allowed": remote_allowed,
@@ -138,6 +141,13 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
                 "detector-capability",
                 "command-detector",
             ],
+            "detector_tooling": {
+                "operations": ["list", "doctor", "conformance"],
+                "inventory_side_effect_free": True,
+                "doctor_side_effect_free": True,
+                "reference_conformance_offline": True,
+                "reference_conformance_vendor_equivalent": False,
+            },
         },
         "modes": [
             "auto",
@@ -194,7 +204,12 @@ def plan(
             limits=limits,
         )
     if cfg.resolved_lm_backend == "fireworks":
-        allowed = bool(cfg.fireworks_api_key and capabilities(cfg)["remote_processing_allowed"])
+        try:
+            assert_remote_allowed(cfg.fireworks_base_url, cfg)
+            remote_allowed = True
+        except PermissionError:
+            remote_allowed = False
+        allowed = bool(cfg.fireworks_api_key and remote_allowed)
         estimated = (
             cfg.max_remote_calls
             if mode == "auto"
@@ -218,8 +233,8 @@ def plan(
             estimated_remote_calls=estimated,
             limits=limits,
         )
-    deps = bool(find_spec("torch") and find_spec("transformers"))
-    local_usable = deps and (cfg.allow_model_download or model_cached(cfg.local_lm))
+    deps = "torch" in sys.modules and "transformers" in sys.modules
+    local_usable = deps and (cfg.allow_model_download or model_loaded(cfg.local_lm))
     scorer_usable = local_usable
     if cfg.scorer_provider:
         scorer_manifest = provider_manifest(cfg.scorer_provider, kind="scorer")

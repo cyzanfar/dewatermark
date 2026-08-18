@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/detector-capability-v1.json",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/detector-capability-v1.json",
   "title": "DewatermarkDetectorCapability",
   "type": "object",
   "required": [
@@ -32,7 +32,7 @@
       "type": "object",
       "properties": {
         "evidence_level": {
-          "enum": ["none", "artifact", "surrogate", "same_implementation", "independent_detector", "provider_detector"]
+          "enum": ["none", "artifact", "surrogate", "same_policy", "same_implementation", "independent_detector", "provider_detector"]
         },
         "threat_models": {
           "type": "array",

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/benchmark-replication-record-v1.json",
+  "title": "Dewatermark independent replication record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_type",
+    "record_id",
+    "source_bundle_id",
+    "reproduced_bundle_id",
+    "operator",
+    "executed_at",
+    "environment_sha256",
+    "command_sha256",
+    "outcome",
+    "tolerance_assessment_sha256",
+    "deviations",
+    "attestation"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "record_type": { "const": "dewatermark_independent_replication" },
+    "record_id": { "$ref": "#/$defs/sha256" },
+    "source_bundle_id": { "$ref": "#/$defs/sha256" },
+    "reproduced_bundle_id": { "$ref": "#/$defs/sha256" },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "organization", "relationship", "disclosure"],
+      "properties": {
+        "id": { "$ref": "#/$defs/publicId" },
+        "organization": { "$ref": "#/$defs/publicId" },
+        "relationship": {
+          "enum": ["independent", "same_organization", "original_operator"]
+        },
+        "disclosure": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "executed_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])T(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?Z$"
+    },
+    "environment_sha256": { "$ref": "#/$defs/sha256" },
+    "command_sha256": { "$ref": "#/$defs/sha256" },
+    "outcome": {
+      "enum": ["exact_match", "within_registered_tolerance", "deviated", "failed"]
+    },
+    "tolerance_assessment_sha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "deviations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/publicId" }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "artifact_sha256"],
+      "properties": {
+        "state": { "enum": ["not_signed", "detached_signature"] },
+        "artifact_sha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "publicId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]*$"
+    }
+  }
+}

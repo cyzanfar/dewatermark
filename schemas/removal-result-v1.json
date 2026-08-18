@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/removal-result-v1.json",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/removal-result-v1.json",
   "title": "DewatermarkRemovalResult",
   "type": "object",
   "required": ["schema_version", "cleaned_text", "stages", "report"],

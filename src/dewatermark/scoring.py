@@ -19,7 +19,6 @@ from __future__ import annotations
 import gc
 import hashlib
 import math
-import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -33,7 +32,13 @@ from .extension_safety import (
     safe_extension_config,
     static_capability,
 )
-from .request_context import checkpoint, current_request_context, safe_error
+from .request_context import (
+    begin_extension_usage,
+    checkpoint,
+    current_request_context,
+    extension_usage_error,
+    safe_error,
+)
 
 
 def _scorer_permission_error(cfg: DewatermarkConfig) -> Optional[str]:
@@ -68,8 +73,6 @@ def _scorer_instance(cfg: DewatermarkConfig):
     return instance
 
 
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
 _lock = threading.Lock()
 _state: OrderedDict[str, dict] = OrderedDict()
 
@@ -95,7 +98,14 @@ def available(config: Optional[DewatermarkConfig] = None) -> bool:
         if _scorer_permission_error(cfg) is not None:
             return False
         try:
-            return bool(_scorer_instance(cfg).available())
+            from .providers import provider_manifest
+
+            manifest = provider_manifest(cfg.scorer_provider, kind="scorer")
+            if manifest is None:
+                return False
+            begin_extension_usage(manifest)
+            value = _scorer_instance(cfg).available()
+            return value if type(value) is bool else False
         except Exception:
             return False
     if cfg.resolved_lm_backend == "fireworks":
@@ -127,6 +137,14 @@ def model_cached(model_name: str) -> bool:
         return isinstance(try_to_load_from_cache(model_name, "config.json"), str)
     except Exception:
         return False
+
+
+def model_loaded(model_name: str) -> bool:
+    """Return in-process state only; never inspect model storage or import a hub."""
+    if type(model_name) is not str or not model_name:
+        return False
+    with _lock:
+        return model_name in _state
 
 
 def load(config: Optional[DewatermarkConfig] = None):
@@ -225,7 +243,22 @@ def self_information(text: str, config: Optional[DewatermarkConfig] = None) -> l
         if denied is not None:
             raise ScorerUnavailable(denied)
         try:
-            return list(_scorer_instance(cfg).self_information(text))
+            from .providers import provider_manifest
+
+            manifest = provider_manifest(cfg.scorer_provider, kind="scorer")
+            if manifest is None:
+                raise ScorerUnavailable("scorer provider requires a static scorer manifest")
+            usage_snapshot, accounting = begin_extension_usage(manifest)
+            result = list(_scorer_instance(cfg).self_information(text))
+            checkpoint()
+            usage_error = extension_usage_error(
+                usage_snapshot,
+                network_required=manifest.network_required,
+                resource_accounting=accounting,
+            )
+            if usage_error is not None:
+                raise ScorerUnavailable("scorer provider resource usage was not accounted")
+            return result
         except Exception as exc:
             raise ScorerUnavailable(safe_error("scorer provider", exc)) from None
     if cfg.resolved_lm_backend == "fireworks":

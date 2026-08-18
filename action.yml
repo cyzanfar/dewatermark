@@ -6,7 +6,7 @@ branding:
   color: purple
 inputs:
   paths:
-    description: Space-separated paths to scan
+    description: Newline-delimited paths to scan (one literal path per line)
     default: .
   output:
     description: SARIF output path
@@ -25,4 +25,19 @@ runs:
       env:
         INPUT_PATHS: ${{ inputs.paths }}
         INPUT_OUTPUT: ${{ inputs.output }}
-      run: dewatermark check $INPUT_PATHS --format sarif --output "$INPUT_OUTPUT" || test $? -eq 1
+      run: |
+        paths=()
+        while IFS= read -r path; do
+          if [[ -n "$path" ]]; then
+            paths+=("$path")
+          fi
+        done <<< "$INPUT_PATHS"
+        if [[ ${#paths[@]} -eq 0 ]]; then
+          echo "At least one scan path is required" >&2
+          exit 2
+        fi
+        status=0
+        dewatermark check --format sarif --output "$INPUT_OUTPUT" -- "${paths[@]}" || status=$?
+        if [[ $status -ne 0 && $status -ne 1 ]]; then
+          exit "$status"
+        fi

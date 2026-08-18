@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from .extension_safety import require_extension
+from .request_context import begin_extension_usage, checkpoint, extension_usage_error
 
 _BOUNDARY = re.compile(r"(\n\s*\n|(?<=[.!?])(?=\s+))")
 
@@ -37,8 +38,17 @@ def split_for_config(text: str, config) -> list[str]:
     """Use an injected chunker or the formatting-preserving built-in splitter."""
     if config.chunker is None:
         return chunk_text(text, config.max_chunk_chars)
-    require_extension(config.chunker, "chunker", config)
+    capability = require_extension(config.chunker, "chunker", config)
+    usage_snapshot, accounting = begin_extension_usage(capability)
     chunks = list(config.chunker.split(text, config.max_chunk_chars))
+    checkpoint()
+    usage_error = extension_usage_error(
+        usage_snapshot,
+        network_required=capability.network_required,
+        resource_accounting=accounting,
+    )
+    if usage_error is not None:
+        raise TypeError("custom chunker resource usage was not accounted")
     if not all(isinstance(chunk, str) for chunk in chunks):
         raise TypeError("custom chunker must return strings")
     if "".join(chunks) != text:

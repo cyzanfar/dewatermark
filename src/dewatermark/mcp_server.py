@@ -38,6 +38,8 @@ def _safe_tool_call(operation: str, callback: Callable[[], _T]) -> _T:
         error = (ValueError, "plan digest does not match the reviewed request")
     except PermissionError:
         error = (PermissionError, "operation is not permitted")
+    except ValueError:
+        error = (ValueError, f"{operation} request is invalid")
     except Exception:
         error = (RuntimeError, f"{operation} failed; details redacted")
     error_type, message = error

@@ -52,8 +52,15 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
       - run: python -m pip install -e ".[dev]"
       - run: python -m pytest
+      - name: Test VS Code local scanner bridge
+        working-directory: integrations/vscode
+        run: npm test
 
   quality:
     name: Static checks and examples
@@ -67,16 +74,51 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install -e ".[dev]"
-      - run: ruff check src tests eval
-      - run: ruff format --check src tests eval
+      - run: ruff check src tests eval adapters scripts examples
+      - run: ruff format --check src tests eval adapters scripts examples
       - run: mypy src/dewatermark
+      - run: python scripts/export_openapi.py --check
       - run: python examples/offline.py
       - run: python examples/batch_async.py
       - run: python examples/provider.py
+      - run: python examples/reference_detectors.py
+      - run: python examples/quality_gates.py
       - name: Dogfood the actionable Unicode scanner
+        run: dewatermark check .
+
+  integrations:
+    name: Editor integration packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+      - run: python -m pip install -e .
+      - name: Test and package VS Code extension
+        working-directory: integrations/vscode
+        run: |
+          npm ci --ignore-scripts
+          npm test
+          npm run package
+      - name: Test and package JetBrains plugin
+        working-directory: integrations/jetbrains
         run: >-
-          dewatermark check src tests eval docs examples web
-          README.md CONTRIBUTING.md SECURITY.md CHANGELOG.md
+          ./gradlew --no-daemon --dependency-verification=strict
+          test buildPlugin verifyPlugin
 
   browser-policy:
     name: Browser/Python policy parity
@@ -99,6 +141,11 @@ jobs:
           node web/generate-policy.mjs > generated-unicode-policy.mjs
           git diff --no-index --exit-code web/unicode-policy.mjs generated-unicode-policy.mjs
       - run: python -m pytest tests/test_unicode_cross_runtime.py
+      - name: Test and inspect JavaScript package
+        working-directory: web
+        run: |
+          npm run check
+          npm pack --dry-run
 
   no-network:
     name: Offline-by-default test enforcement
@@ -120,6 +167,7 @@ jobs:
       - name: Deny non-loopback sockets during tests
         run: >-
           python -m pytest --disable-socket
+          --allow-unix-socket
           --allow-hosts=127.0.0.1,localhost,::1
 
   agents:
@@ -162,7 +210,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install -e ".[${{ matrix.extra }}]"
+      - env:
+          INSTALL_EXTRA: ${{ matrix.extra }}
+        run: python -m pip install -e ".[${INSTALL_EXTRA}]"
       - run: python -m pip check
       - if: matrix.extra == 'local'
         run: python -c "import torch, transformers; import dewatermark.scoring"
@@ -180,20 +230,29 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install build twine pytest
+      - run: python -m pip install build==1.5.0 twine==7.0.0 pytest==9.1.1
       - run: python -m build
       - run: python -m twine check dist/*
+      - name: Prove the sdist can produce an installable wheel
+        run: |
+          mkdir dist-from-sdist
+          python -m pip wheel --no-deps --wheel-dir dist-from-sdist dist/*.tar.gz
       - name: Validate wheel and sdist contents
         env:
           DEWATERMARK_DIST_DIR: dist
         run: python -m pytest tests/test_distribution_artifacts.py
       - name: Install and smoke-test the wheel
+        env:
+          EVAL_OUTPUT_DIR: ${{ runner.temp }}
         run: |
-          python -m pip install --force-reinstall dist/*.whl
+          python -m pip install --force-reinstall dist-from-sdist/*.whl
           python -m pip check
           python -I -c "import dewatermark, dewatermark_eval; from importlib.resources import files; assert files('dewatermark').joinpath('skills/remove-text-watermarks/SKILL.md').is_file()"
           dewatermark capabilities
-          dewatermark-eval --skip-statistical --output ${{ runner.temp }}/results.md
+          dewatermark-eval --skip-statistical \
+            --output "$EVAL_OUTPUT_DIR/results.md" \
+            --json-output "$EVAL_OUTPUT_DIR/results.json" \
+            --checkpoint "$EVAL_OUTPUT_DIR/progress.jsonl"
       - name: Prepare SBOM output
         run: mkdir -p attestations
       - name: Generate distribution SBOM

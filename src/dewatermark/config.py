@@ -22,6 +22,8 @@ v0.2 names remain temporary compatibility aliases:
 
 from __future__ import annotations
 
+import hashlib
+import math
 import os
 from dataclasses import dataclass, field, fields, replace
 from typing import Any, Callable, Mapping, Optional, cast
@@ -63,6 +65,8 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _validate_base_url(value: str, name: str) -> None:
+    if type(value) is not str:
+        raise ConfigurationError(f"{name} must be an absolute http or https URL")
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ConfigurationError(f"{name} must be an absolute http or https URL")
@@ -78,17 +82,17 @@ class DewatermarkConfig:
 
     lm_backend: str = "auto"  # "auto" | "fireworks" | "local"
     fireworks_api_key: Optional[str] = field(default=None, repr=False)
-    fireworks_base_url: str = "https://api.fireworks.ai/inference/v1"
-    fireworks_model: str = "accounts/fireworks/models/gpt-oss-20b"
-    local_lm: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    fireworks_base_url: str = field(default="https://api.fireworks.ai/inference/v1", repr=False)
+    fireworks_model: str = field(default="accounts/fireworks/models/gpt-oss-20b", repr=False)
+    local_lm: str = field(default="Qwen/Qwen2.5-0.5B-Instruct", repr=False)
     local_lm_enabled: bool = True
     allow_model_download: bool = False
-    scorer_provider: Optional[str] = None
-    detector_provider: Optional[str] = None
-    rewriter_provider: Optional[str] = None
+    scorer_provider: Optional[str] = field(default=None, repr=False)
+    detector_provider: Optional[str] = field(default=None, repr=False)
+    rewriter_provider: Optional[str] = field(default=None, repr=False)
     llm_api_key: Optional[str] = field(default=None, repr=False)
-    llm_base_url: str = "https://api.moonshot.ai/v1"
-    llm_model: str = "kimi-k2.6"
+    llm_base_url: str = field(default="https://api.moonshot.ai/v1", repr=False)
+    llm_model: str = field(default="kimi-k2.6", repr=False)
     sanitize_profile: SanitizeProfile = "safe"
     allow_remote_processing: bool = False
     request_retries: int = 2
@@ -109,45 +113,75 @@ class DewatermarkConfig:
     )
     quality_min_semantic_score: Optional[float] = None
     quality_gate: Optional[Any] = field(default=None, repr=False, compare=False)
+    quality_gates: tuple[Any, ...] = field(default=(), repr=False, compare=False)
     chunker: Optional[Any] = field(default=None, repr=False, compare=False)
     event_handler: Optional[Callable[[Mapping[str, Any]], None]] = field(
         default=None, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
-        if self.lm_backend not in ("auto", "fireworks", "local"):
+        if type(self.lm_backend) is not str or self.lm_backend not in (
+            "auto",
+            "fireworks",
+            "local",
+        ):
             raise ConfigurationError("lm_backend must be 'auto', 'fireworks', or 'local'")
         if self.sanitize_profile not in ("safe", "aggressive"):
             raise ConfigurationError("sanitize_profile must be 'safe' or 'aggressive'")
+        for name in (
+            "local_lm_enabled",
+            "allow_model_download",
+            "allow_remote_processing",
+            "require_verified",
+        ):
+            if type(getattr(self, name)) is not bool:
+                raise ConfigurationError(f"{name} must be boolean")
         _validate_base_url(self.fireworks_base_url, "fireworks_base_url")
         _validate_base_url(self.llm_base_url, "llm_base_url")
-        if not 0 <= self.request_retries <= 5:
+        for name in ("fireworks_model", "local_lm", "llm_model"):
+            value = getattr(self, name)
+            if type(value) is not str or not value.strip():
+                raise ConfigurationError(f"{name} must be a non-empty string")
+        for name in ("scorer_provider", "detector_provider", "rewriter_provider"):
+            value = getattr(self, name)
+            if value is not None and (type(value) is not str or not value.strip()):
+                raise ConfigurationError(f"{name} must be a non-empty string when configured")
+        if type(self.request_retries) is not int or not 0 <= self.request_retries <= 5:
             raise ConfigurationError("request_retries must be between 0 and 5")
-        if not 1 <= self.request_timeout <= 3600:
+        if type(self.request_timeout) is not int or not 1 <= self.request_timeout <= 3600:
             raise ConfigurationError("request_timeout must be between 1 and 3600 seconds")
-        if not 1 <= self.max_concurrency <= 64:
+        if type(self.max_concurrency) is not int or not 1 <= self.max_concurrency <= 64:
             raise ConfigurationError("max_concurrency must be between 1 and 64")
-        if self.max_input_chars < 1:
+        if type(self.max_input_chars) is not int or self.max_input_chars < 1:
             raise ConfigurationError("max_input_chars must be positive")
-        if not 0 <= self.max_remote_calls <= 100:
+        if type(self.max_remote_calls) is not int or not 0 <= self.max_remote_calls <= 100:
             raise ConfigurationError("max_remote_calls must be between 0 and 100")
-        if not 32 <= self.max_output_tokens <= 32768:
+        if type(self.max_output_tokens) is not int or not 32 <= self.max_output_tokens <= 32768:
             raise ConfigurationError("max_output_tokens must be between 32 and 32768")
-        if not 1 <= self.max_batch_items <= 100_000:
+        if type(self.max_batch_items) is not int or not 1 <= self.max_batch_items <= 100_000:
             raise ConfigurationError("max_batch_items must be between 1 and 100000")
-        if not 1 <= self.model_cache_size <= 8:
+        if type(self.model_cache_size) is not int or not 1 <= self.model_cache_size <= 8:
             raise ConfigurationError("model_cache_size must be between 1 and 8")
-        if not isinstance(self.random_seed, int) or self.random_seed < 0:
+        if type(self.random_seed) is not int or self.random_seed < 0:
             raise ConfigurationError("random_seed must be a non-negative integer")
-        if not 0 < self.quality_min_length_ratio <= self.quality_max_length_ratio:
-            raise ConfigurationError("invalid quality length-ratio bounds")
-        if self.max_chunk_chars < 256:
-            raise ConfigurationError("max_chunk_chars must be at least 256")
         if (
-            self.quality_min_semantic_score is not None
-            and not 0 <= self.quality_min_semantic_score <= 1
+            type(self.quality_min_length_ratio) not in (int, float)
+            or type(self.quality_max_length_ratio) not in (int, float)
+            or not math.isfinite(float(self.quality_min_length_ratio))
+            or not math.isfinite(float(self.quality_max_length_ratio))
+            or not 0 < self.quality_min_length_ratio <= self.quality_max_length_ratio
+        ):
+            raise ConfigurationError("invalid quality length-ratio bounds")
+        if type(self.max_chunk_chars) is not int or self.max_chunk_chars < 256:
+            raise ConfigurationError("max_chunk_chars must be at least 256")
+        if self.quality_min_semantic_score is not None and (
+            type(self.quality_min_semantic_score) not in (int, float)
+            or not math.isfinite(float(self.quality_min_semantic_score))
+            or not 0 <= self.quality_min_semantic_score <= 1
         ):
             raise ConfigurationError("quality_min_semantic_score must be between 0 and 1")
+        if type(self.quality_gates) is not tuple:
+            raise ConfigurationError("quality_gates must be an immutable tuple")
 
     @property
     def resolved_lm_backend(self) -> str:
@@ -200,8 +234,29 @@ class DewatermarkConfig:
         value = {item.name: getattr(self, item.name) for item in fields(self)}
         value["semantic_scorer"] = bool(self.semantic_scorer)
         value["event_handler"] = bool(self.event_handler)
-        value["quality_gate"] = type(self.quality_gate).__name__ if self.quality_gate else None
-        value["chunker"] = type(self.chunker).__name__ if self.chunker else None
+        # Extension class names are user-controlled metadata and have appeared
+        # in real applications with embedded tenant or credential material.
+        # Configuration serialization needs only presence, never Python names
+        # or representations.
+        value["quality_gate"] = "configured" if self.quality_gate is not None else None
+        value["quality_gates"] = ["configured"] * len(self.quality_gates)
+        value["chunker"] = "configured" if self.chunker is not None else None
+        for key in (
+            "fireworks_base_url",
+            "fireworks_model",
+            "local_lm",
+            "llm_base_url",
+            "llm_model",
+            "scorer_provider",
+            "detector_provider",
+            "rewriter_provider",
+        ):
+            raw = value[key]
+            value[key] = (
+                "sha256:" + hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
+                if raw is not None
+                else None
+            )
         for key in ("fireworks_api_key", "llm_api_key"):
             value[key] = "***" if value[key] else None
         return value

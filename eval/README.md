@@ -9,15 +9,20 @@ with matched, transformed unwatermarked controls.
 An empirical estimate is emitted only when the null set contains at least
 `ceil(1/FPR)` examples: 100 for 1%, 1,000 for 0.1%, and 100,000 for 1e-5.
 The report marks an estimate as suitable for a more stable tail estimate only
-at `20 * ceil(1/FPR)` nulls and always includes a Wilson interval. A dedicated
-null population calibrates thresholds; a disjoint, matched null population
-measures test FPR. Watermarked positives and both null populations pass through
-the same removal mode. Use multiple seeds, models, tasks, and length sweeps.
+at `20 * ceil(1/FPR)` null samples **and independent prompt/document clusters**
+and always includes a Wilson interval. A dedicated null population calibrates
+thresholds; a disjoint, matched null population measures test FPR. Watermarked
+positives and both null populations pass through the same removal mode. Use
+multiple seeds, models, tasks, and length sweeps.
 
 Reported `cleared` outcomes are conditional on a named detector flagging the
 original positive. `false insertion` is an initially unflagged null crossing
 that detector's threshold after transformation. Neither is an authorship claim.
-AUROC uses a deterministic stratified-bootstrap interval.
+AUROC uses deterministic prompt/document-cluster bootstrap intervals. The JSON
+also includes a paired candidate-minus-source AUROC interval and paired cluster
+rate deltas at every requested fixed FPR. These intervals condition on the
+thresholds calibrated on the disjoint null split; they do not disguise that
+conditioning as full threshold-uncertainty propagation.
 
 The built-in KGW and Unigram implementations are internal references. EXP is a
 simplified Gumbel approximation. None is independent vendor validation.
@@ -68,14 +73,27 @@ recorded separately; they are never merged with the generating detector.
 
 ## Commands and artifacts
 
+The default `eval/RESULTS.md` is a generated, git-ignored local artifact, not a
+checked-in benchmark result. Prefer an explicit fresh output directory, as
+below; no generated default report is release evidence.
+
 ```bash
-dewatermark-eval --skip-statistical --output results.md
+run_dir="$(mktemp -d)"
+dewatermark-eval --skip-statistical \
+  --output "$run_dir/results.md" \
+  --json-output "$run_dir/results.json" \
+  --checkpoint "$run_dir/progress.jsonl"
+
+# Start a different run in a fresh directory.
+run_dir="$(mktemp -d)"
 dewatermark-eval --schemes KGW,Unigram,EXP \
   --modes bias_inversion,sira,full \
   --samples 100 --null-samples 1000 \
   --lengths 100,250,500,1000,2000 \
   --model-revision MODEL_COMMIT --allow-network --allow-model-download \
-  --json-output results.json --checkpoint progress.jsonl
+  --output "$run_dir/results.md" \
+  --json-output "$run_dir/results.json" \
+  --checkpoint "$run_dir/progress.jsonl"
 ```
 
 Runs stop on sample failure by default. `--failure-policy continue` records
@@ -85,6 +103,8 @@ library and evaluation source trees, canonical Unicode policy, source
 commit/dirty state, package/backend revisions, and adapter sidecar/executable
 digests. `--resume` refuses incompatible checkpoints and unresolved identities,
 including an unpinned statistical generator revision.
+To continue the same run against the same checkpoint, repeat its command with
+`--resume`; otherwise use a fresh run directory.
 
 Each primary and cross-detector result includes content-addressed, no-text score
 tables for positive, held-out-null, and threshold-calibration cohorts. Rows
@@ -102,3 +122,59 @@ requires both. Learned quality metrics obey the same policy: cached MiniLM can
 load with `local_files_only`; BERTScore and MAUVE remain unavailable unless both
 permissions are explicit. For published results, replace `MODEL_COMMIT` with an
 immutable revision and retain it in the generated manifest.
+
+## Protocol-complete evidence path
+
+`dewatermark-eval` is an exploratory generator runner. The stricter evidence
+path is `dewatermark-evidence`, backed by the canonical
+`protocol-registry-v1.json` and four public JSON schemas. It does not import a
+detector or touch a model while validating or aggregating.
+
+```bash
+# Offline deterministic plumbing check (synthetic scores; never efficacy evidence)
+dewatermark-evidence reference-protocol --output-directory reference-run
+dewatermark-evidence verify reference-run/evidence.json
+
+# Assemble already-frozen, content-free observations
+dewatermark-evidence assemble \
+  --sample-registry evidence/sample-registry.json \
+  --observations evidence/observations.json \
+  --output evidence/evidence.json \
+  --purpose frozen_evaluation
+
+# Print only the recipe digest and permission requirements; argv/paths stay local
+dewatermark-evidence replay evidence/evidence.json
+
+# Execute a custom run only with a bounded local recipe whose digest matches the bundle
+replay_workspace="$(mktemp -d)"
+dewatermark-evidence replay evidence/evidence.json \
+  --recipe replay-recipe.json --workspace "$replay_workspace" --execute
+```
+
+`--execute` runs the digest-matched local command without a shell, with a
+scrubbed environment and bounded output/time, but it is not an operating-system
+sandbox. Pass a fresh disposable directory through `--workspace`, as above.
+Result paths are contained and existing results are never overwritten.
+
+The sample registry enforces disjoint calibration/development/final-test
+clusters and keys, matched generator controls, provenance-bound human controls,
+task checker kinds, exact detector-token bins, and the full final-test task ×
+language × length × cohort matrix. Raw human inputs can be converted to digest
+records with `protocol.human_control_records`; runtime text is returned only
+with explicit opt-in and is never embedded in an evidence bundle.
+
+Observation aggregation recalibrates each named detector/condition on the
+calibration nulls, evaluates final matched and human controls, retains failures
+and abstentions in the primary success denominator, emits cross-detector
+confusion, and reports missing protocol areas instead of omitting them. A
+source bundle cannot self-certify replication. Use a separate
+`benchmark-replication-record-v1` record and `verify-replication` to cross-bind
+the source and reproduced bundle. This verifies metadata and content identity,
+not the operator's cryptographic identity; claim eligibility therefore remains
+false until an external attestation verifier establishes independence.
+
+Blinded human review is local-only. `review.create_blinded_review_packet`
+requires explicit text-artifact consent, randomizes A/B ordering, and keeps the
+method assignment key separate. `review.summarize_blinded_reviews` publishes a
+content-free, assignment-cluster-bootstrap agreement record; it never promotes
+human review into a substitute for task-specific checks.

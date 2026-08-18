@@ -5,7 +5,9 @@ labels: [enhancement]
 body:
   - type: textarea
     id: problem
-    attributes: {label: Problem, description: What user or research problem should this solve?}
+    attributes:
+      label: Problem
+      description: What user or research problem should this solve?
     validations: {required: true}
   - type: textarea
     id: proposal

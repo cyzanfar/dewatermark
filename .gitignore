@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 node_modules/
 .next/
 __pycache__/
@@ -18,3 +20,14 @@ eval/.venv/
 eval/RESULTS.md
 dewatermark-results.md
 dewatermark-eval.jsonl
+results.md
+results.json
+progress.jsonl
+*.sarif
+reference-run/
+evidence/
+generated-clients/
+*.tgz
+*.vsix
+integrations/jetbrains/.gradle/
+integrations/jetbrains/.intellijPlatform/

@@ -28,6 +28,8 @@ from .config import DewatermarkConfig, assert_remote_allowed, resolve
 from .detectors import UnicodeArtifactDetector, capability_of, run_detector
 from .extension_safety import (
     enforce_consent,
+    implementation_sha256,
+    manifest_sha256,
     manifests_match,
     safe_extension_config,
     static_capability,
@@ -46,11 +48,18 @@ from .models import (
 )
 from .paraphraser import recursive_paraphrase
 from .providers import get_provider, provider_manifest
-from .quality import QualityReport, evaluate_candidate
+from .quality import (
+    QualityGateBinding,
+    QualityGateOutcome,
+    QualityReport,
+    evaluate_candidate,
+)
 from .request_context import (
     RequestContext,
+    begin_extension_usage,
     checkpoint,
     current_request_context,
+    extension_usage_error,
     request_scope,
     safe_error,
 )
@@ -116,19 +125,22 @@ def _public_stage_details(value: Any, *, key: str = "") -> Any:
     """Remove source spans and credentials from report/receipt metadata."""
     normalized = key.lower().replace("-", "_")
     if normalized in _PROTECTED_DETAIL_FIELDS:
-        return {"redacted_count": len(value) if isinstance(value, (list, tuple)) else 0}
+        return {"redacted_count": len(value) if type(value) in (list, tuple) else 0}
     if _private_detail_key(normalized):
         return "<redacted>"
-    if isinstance(value, Mapping):
+    if type(value) is dict:
         return {
-            str(item_key): _public_stage_details(item, key=str(item_key))
+            item_key: _public_stage_details(item, key=item_key)
             for item_key, item in value.items()
+            if type(item_key) is str
         }
-    if isinstance(value, (list, tuple)):
+    if type(value) in (list, tuple):
         return [_public_stage_details(item) for item in value]
-    if value is None or isinstance(value, (str, bool, int, float)):
+    if value is None or type(value) in (str, bool, int):
         return value
-    return f"<{type(value).__name__}>"
+    if type(value) is float:
+        return value if math.isfinite(value) else "<redacted>"
+    return "<redacted>"
 
 
 def _public_quality(report: QualityReport) -> dict[str, Any]:
@@ -138,8 +150,11 @@ def _public_quality(report: QualityReport) -> dict[str, Any]:
 def _type_identifier(value: Any) -> Optional[str]:
     if value is None:
         return None
-    kind = value if isinstance(value, type) else type(value)
-    return f"{kind.__module__}.{kind.__qualname__}"
+    try:
+        digest = implementation_sha256(value, instance_sensitive=False)
+    except Exception:
+        return "implementation:redacted"
+    return f"implementation-sha256:{digest}"
 
 
 def _model_sha256(value: str) -> str:
@@ -148,6 +163,41 @@ def _model_sha256(value: str) -> str:
 
 def _receipt_policy(cfg: DewatermarkConfig) -> dict[str, Any]:
     """Return consequential, credential-free policy for a reproducible receipt."""
+    configured_gates: list[dict[str, Any]] = []
+    if cfg.quality_gate is not None:
+        try:
+            capability = static_capability(cfg.quality_gate, "quality_gate")
+            configured_gates.append(
+                {
+                    "identifier": capability.identifier,
+                    "version": capability.version,
+                    "required": True,
+                    "capability_sha256": manifest_sha256(capability),
+                }
+            )
+        except Exception:
+            configured_gates.append(
+                {"implementation": _type_identifier(cfg.quality_gate), "required": True}
+            )
+    for item in cfg.quality_gates:
+        binding = item if type(item) is QualityGateBinding else QualityGateBinding(item)
+        try:
+            capability = static_capability(binding.gate, "quality_gate")
+            configured_gates.append(
+                {
+                    "identifier": capability.identifier,
+                    "version": capability.version,
+                    "required": binding.required,
+                    "capability_sha256": manifest_sha256(capability),
+                }
+            )
+        except Exception:
+            configured_gates.append(
+                {
+                    "implementation": _type_identifier(binding.gate),
+                    "required": binding.required,
+                }
+            )
     return {
         "sanitize_profile": cfg.sanitize_profile,
         "allow_remote_processing": cfg.allow_remote_processing,
@@ -161,6 +211,7 @@ def _receipt_policy(cfg: DewatermarkConfig) -> dict[str, Any]:
         "quality_max_length_ratio": cfg.quality_max_length_ratio,
         "quality_min_semantic_score": cfg.quality_min_semantic_score,
         "quality_gate": _type_identifier(cfg.quality_gate),
+        "quality_gates": configured_gates,
         "semantic_scorer": _type_identifier(cfg.semantic_scorer),
     }
 
@@ -270,7 +321,7 @@ def _claim_scope(
     )
 
 
-@dataclass
+@dataclass(repr=False)
 class RemovalResult:
     """Outcome of :func:`remove`: the cleaned text plus per-stage details."""
 
@@ -278,6 +329,9 @@ class RemovalResult:
     report: RemovalReport
     stages: list[StageResult] = field(default_factory=list)
     receipt: Optional[EvidenceReceipt] = None
+
+    def __repr__(self) -> str:
+        return "<dewatermark removal result; text redacted>"
 
     def to_dict(self) -> dict:
         return {
@@ -341,6 +395,8 @@ def _provider_stage(name: str, detail: Mapping[str, Any]) -> dict[str, Any]:
     """Accept provider metadata without allowing it to forge pipeline fields."""
     safe: dict[str, Any] = {}
     for key, value in detail.items():
+        if type(key) is not str:
+            continue
         if key in _PROVIDER_RESERVED:
             continue
         if (
@@ -378,15 +434,15 @@ def _public_detector_name(value: Any) -> str:
 def _validate(text, mode, passes, epsilon, beta, best_of):
     if not isinstance(text, str) or not text:
         raise ValueError("'text' must be a non-empty string.")
-    if mode not in VALID_MODES:
-        raise ValueError(f"Invalid mode {mode!r}. Must be one of {VALID_MODES}.")
-    if not isinstance(passes, int) or not 1 <= passes <= 5:
+    if type(mode) is not str or mode not in VALID_MODES:
+        raise ValueError(f"Invalid mode. Must be one of {VALID_MODES}.")
+    if type(passes) is not int or not 1 <= passes <= 5:
         raise ValueError("'passes' must be an integer between 1 and 5.")
-    if not isinstance(epsilon, (int, float)) or not 0.05 <= epsilon <= 0.9:
+    if type(epsilon) not in (int, float) or not 0.05 <= epsilon <= 0.9:
         raise ValueError("'epsilon' must be a number between 0.05 and 0.9.")
-    if not isinstance(beta, (int, float)) or not 0.0 <= beta <= 20.0:
+    if type(beta) not in (int, float) or not 0.0 <= beta <= 20.0:
         raise ValueError("'beta' must be a number between 0 and 20.")
-    if not isinstance(best_of, int) or not 1 <= best_of <= 6:
+    if type(best_of) is not int or not 1 <= best_of <= 6:
         raise ValueError("'best_of' must be an integer between 1 and 6.")
 
 
@@ -518,6 +574,16 @@ def _quality_report(source: str, candidate: str, cfg: DewatermarkConfig) -> Qual
             length_ratio=round(len(candidate.split()) / source_words, 4),
             distinct_1_ratio=0.0,
             reasons=[safe_error("quality gate", exc)],
+            gate_outcomes=(
+                QualityGateOutcome(
+                    identifier="central-quality-pipeline",
+                    gate_type="external",
+                    status="error",
+                    required=True,
+                    checked_items=0,
+                    reason_code="extension_rejected",
+                ),
+            ),
         )
 
 
@@ -553,11 +619,36 @@ def remove(
     ``status='success'`` remains for v1 compatibility. Callers should use the
     explicit detection/transformation/verification fields for assurance logic.
     """
-    _validate(text, mode, passes, epsilon, beta, best_of)
     cfg = resolve(config)
+    context = RequestContext.from_config(cfg, _cancel_event)
+    return _remove_with_context(
+        text,
+        mode=mode,
+        passes=passes,
+        epsilon=epsilon,
+        beta=beta,
+        best_of=best_of,
+        detector=detector,
+        cfg=cfg,
+        context=context,
+    )
+
+
+def _remove_with_context(
+    text: str,
+    *,
+    mode: RemovalMode,
+    passes: int,
+    epsilon: float,
+    beta: float,
+    best_of: int,
+    detector: str | Any | None,
+    cfg: DewatermarkConfig,
+    context: RequestContext,
+) -> RemovalResult:
+    _validate(text, mode, passes, epsilon, beta, best_of)
     if len(text) > cfg.max_input_chars:
         raise ValueError(f"text exceeds max_input_chars={cfg.max_input_chars}")
-    context = RequestContext.from_config(cfg, _cancel_event)
     with request_scope(context):
         return _remove_scoped(
             text,
@@ -653,12 +744,16 @@ def _remove_scoped(
             if declared is None:
                 raise TypeError("provider requires a registered static transformer manifest")
             enforce_consent(declared, cfg)
+            usage_snapshot, accounting = begin_extension_usage(declared)
             provider_factory = get_provider(cfg.rewriter_provider)
             provider = provider_factory(safe_extension_config(cfg))
             actual = static_capability(provider, "transformer")
             if not manifests_match(declared, actual):
                 raise TypeError("provider instance capability does not match its static manifest")
-            if not provider.available():
+            provider_available = provider.available()
+            if type(provider_available) is not bool:
+                raise TypeError("provider availability must be boolean")
+            if not provider_available:
                 transform_failed = True
                 stages.append(
                     {
@@ -676,8 +771,15 @@ def _remove_scoped(
                     beta=beta,
                     best_of=best_of,
                 )
-                if not isinstance(raw_candidate, str) or not isinstance(detail, Mapping):
+                if type(raw_candidate) is not str or type(detail) is not dict:
                     raise TypeError("provider returned an invalid rewrite contract")
+                usage_error = extension_usage_error(
+                    usage_snapshot,
+                    network_required=declared.network_required,
+                    resource_accounting=accounting,
+                )
+                if usage_error is not None:
+                    raise TypeError("provider resource usage was not accounted")
                 candidate = raw_candidate
                 stages.append(_provider_stage(cfg.rewriter_provider, detail))
         elif mode == "auto":
@@ -848,6 +950,10 @@ def _remove_scoped(
                 "_changed": False,
             }
         )
+    # Never commit a candidate after a detector/provider overran the reviewed
+    # request deadline, even if that extension returned a superficially valid
+    # value after the deadline elapsed.
+    checkpoint()
 
     if unsupported_scheme:
         transformation_status: TransformationStatus = "unsupported_scheme"
@@ -891,6 +997,16 @@ def _remove_scoped(
         metadata["surrogate_before"] = surrogate_before
         metadata["surrogate_after"] = _surrogate(current, cfg)
 
+    statistical_before = None if detector_is_unicode else detector_before
+    statistical_after = None if detector_is_unicode else detector_after
+    statistical_channel_verification: VerificationStatus = (
+        "not_verifiable" if detector_is_unicode else statistical_verification
+    )
+    statistical_channel_reason = (
+        "the Unicode artifact detector is not a statistical detector"
+        if detector_is_unicode
+        else verification_reason
+    )
     metadata["channels"] = {
         "unicode": {
             "before": unicode_before.to_dict(),
@@ -898,10 +1014,10 @@ def _remove_scoped(
             "verification_status": unicode_paired.status,
         },
         "statistical": {
-            "before": detector_before.to_dict() if detector_before else None,
-            "after": detector_after.to_dict() if detector_after else None,
-            "verification_status": statistical_verification,
-            "reason": verification_reason,
+            "before": statistical_before.to_dict() if statistical_before else None,
+            "after": statistical_after.to_dict() if statistical_after else None,
+            "verification_status": statistical_channel_verification,
+            "reason": statistical_channel_reason,
         },
     }
 
@@ -1022,13 +1138,38 @@ def remove_many(
     items = list(itertools.islice(iter(texts), limit + 1))
     if len(items) > limit:
         raise ValueError(f"batch exceeds max_batch_items={limit}")
-    if max_workers is not None and max_workers < 1:
+    if max_workers is not None and (type(max_workers) is not int or max_workers < 1):
         raise ValueError("max_workers must be positive")
+    allowed_options = {"passes", "epsilon", "beta", "best_of", "detector"}
+    if set(options) - allowed_options:
+        raise ValueError("batch contains an unsupported removal option")
+    passes = options.get("passes", 2)
+    epsilon = options.get("epsilon", 0.3)
+    beta = options.get("beta", 6.0)
+    best_of = options.get("best_of", 3)
+    detector = options.get("detector")
     workers = min(max_workers or cfg.max_concurrency, cfg.max_concurrency)
     if not items:
         return []
+    # One batch is one request: all items share its wall-clock, remote-call,
+    # output-token, model-access, and cancellation ledger.
+    context = RequestContext.from_config(cfg)
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dewatermark") as pool:
-        futures = [pool.submit(remove, text, mode=mode, config=cfg, **options) for text in items]
+        futures = [
+            pool.submit(
+                _remove_with_context,
+                text,
+                mode=mode,
+                passes=passes,
+                epsilon=epsilon,
+                beta=beta,
+                best_of=best_of,
+                detector=detector,
+                cfg=cfg,
+                context=context,
+            )
+            for text in items
+        ]
         outcomes = []
         for index, future in enumerate(futures):
             try:

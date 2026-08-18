@@ -21,7 +21,12 @@ from .chunking import split_for_config
 from .config import DewatermarkConfig, resolve
 from .prompt_safety import INERT_DATA_INSTRUCTION, inert_block
 from .quality import evaluate_candidate
-from .request_context import checkpoint, current_request_context, safe_error
+from .request_context import (
+    checkpoint,
+    current_request_context,
+    public_quality_report,
+    safe_error,
+)
 
 
 class BIRALogitsProcessor:
@@ -76,7 +81,18 @@ def bira_rewrite(
     otherwise runs the local transformers path below."""
     cfg = resolve(config)
     checkpoint()
-    chunks = split_for_config(text, cfg)
+    base_detail = {
+        "stage": "bias_inversion",
+        "implementation": "bira_proxy",
+        "beta": beta,
+        "quantile": quantile,
+    }
+    try:
+        chunks = split_for_config(text, cfg)
+    except Exception as exc:
+        base_detail["error"] = safe_error("BIRA chunking", exc)
+        base_detail["warning"] = "kept original"
+        return text, base_detail
     if len(chunks) > 1:
         outputs, children = [], []
         for chunk in chunks:
@@ -95,8 +111,13 @@ def bira_rewrite(
         }
         failures = sum(bool(child.get("error") or child.get("warning")) for child in children)
         detail["chunk_failures"] = failures
-        quality = evaluate_candidate(text, combined, cfg)
-        detail["whole_document_quality"] = quality.to_dict()
+        try:
+            quality = evaluate_candidate(text, combined, cfg)
+        except Exception as exc:
+            detail["error"] = safe_error("whole-document quality evaluation", exc)
+            detail["warning"] = "kept original"
+            return text, detail
+        detail["whole_document_quality"] = public_quality_report(quality)
         if not quality.passed:
             detail["warning"] = "combined rewrite failed whole-document quality gates"
             return text, detail
@@ -110,16 +131,11 @@ def bira_rewrite(
             text, beta, quantile, cfg, max_restarts=max_restarts, bias_backoff=bias_backoff
         )
 
-    detail = {
-        "stage": "bias_inversion",
-        "implementation": "bira_proxy",
-        "beta": beta,
-        "quantile": quantile,
-    }
+    detail = base_detail
     try:
         tok, model = scoring.load(cfg)
     except scoring.ScorerUnavailable as exc:
-        detail["error"] = f"local model unavailable: {exc}"
+        detail["error"] = safe_error("local model unavailable", exc)
         return text, detail
 
     import torch
@@ -128,7 +144,7 @@ def bira_rewrite(
     try:
         green = estimate_green(text, quantile, cfg)
     except scoring.ScorerUnavailable as exc:
-        detail["error"] = f"local scoring failed: {exc}"
+        detail["error"] = safe_error("local scoring failed", exc)
         detail["warning"] = "kept original"
         return text, detail
     detail["green_size"] = len(green)
@@ -158,9 +174,11 @@ def bira_rewrite(
         )
         context = current_request_context()
         reserved = budget
+        reservation_made = False
         try:
             if context is not None:
                 reserved = context.reserve_output_tokens(budget)
+                reservation_made = True
             with scoring.inference_lock(cfg), torch.no_grad():
                 out = model.generate(
                     inputs,
@@ -172,8 +190,11 @@ def bira_rewrite(
                     pad_token_id=tok.eos_token_id,
                 )
         except Exception as exc:
-            if context is not None:
-                context.reconcile_local_generation(0)
+            if context is not None and reservation_made:
+                # Generation failures rarely report partial usage. Charge the
+                # conservative ceiling so retries cannot bypass the shared
+                # request budget.
+                context.reconcile_local_generation(reserved)
             attempts.append(
                 {
                     "restart": restart,
@@ -186,16 +207,28 @@ def bira_rewrite(
         generated_tokens = max(0, int(out.shape[-1]) - int(inputs.shape[-1]))
         if context is not None:
             context.reconcile_local_generation(generated_tokens)
-        rewritten = tok.decode(out[0][inputs.shape[-1] :], skip_special_tokens=True).strip()
-        quality = evaluate_candidate(text, rewritten, cfg)
+        try:
+            rewritten = tok.decode(out[0][inputs.shape[-1] :], skip_special_tokens=True).strip()
+            quality = evaluate_candidate(text, rewritten, cfg)
+        except Exception as exc:
+            attempts.append(
+                {
+                    "restart": restart,
+                    "beta": round(current_beta, 3),
+                    "error": safe_error("local candidate evaluation", exc),
+                }
+            )
+            current_beta *= bias_backoff
+            continue
+        public_quality = public_quality_report(quality)
         attempts.append(
-            {"restart": restart, "beta": round(current_beta, 3), "quality": quality.to_dict()}
+            {"restart": restart, "beta": round(current_beta, 3), "quality": public_quality}
         )
         if quality.passed:
             detail["attempts"] = attempts
             detail["effective_beta"] = current_beta
             detail["tokens_after"] = len(rewritten.split())
-            detail["quality"] = quality.to_dict()
+            detail["quality"] = public_quality
             return rewritten, detail
         current_beta *= bias_backoff
 

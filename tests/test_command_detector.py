@@ -157,7 +157,7 @@ def test_manifest_requirements_are_enforced_before_text_is_sent(
         invoked = True
         raise AssertionError("denied command detector must not launch a process")
 
-    monkeypatch.setattr("dewatermark.command_detector.subprocess.Popen", forbidden_popen)
+    monkeypatch.setattr("dewatermark.bounded_process.subprocess.Popen", forbidden_popen)
     evidence = _detector(command_fixture, marker, manifest=manifest).detect("marked private text")
     assert evidence.status == "configuration_mismatch"
     assert "requires" in (evidence.reason or "")
@@ -216,6 +216,30 @@ def test_static_configuration_mismatch_cannot_be_verified(command_fixture, tmp_p
     evidence = _detector(command_fixture, tmp_path / mode, mode).detect("marked text")
     assert evidence.status == "configuration_mismatch"
     assert evidence.details["mismatch_fields"]
+
+
+def test_large_threshold_cannot_pass_relative_tolerance_and_invert_status():
+    threshold = 1_000_000_000_000.0
+    manifest = _manifest(threshold=threshold)
+    detector = CommandDetector((sys.executable,), manifest, OFFLINE)
+    response = {
+        "protocol_version": "1.0",
+        "action": "detect.result",
+        "detector": "fixture-command",
+        "scheme": "fixture-scheme",
+        "status": "not_detected",
+        "score": threshold + 0.25,
+        "threshold": threshold + 0.5,
+        "score_direction": "higher",
+        "effective_tokens": 100,
+        "configuration_sha256": CONFIGURATION_SHA256,
+    }
+
+    evidence = detector._normalize_response(response, "private text")
+
+    assert evidence.status == "configuration_mismatch"
+    assert evidence.details["mismatch_fields"] == ["threshold"]
+    assert evidence.threshold == threshold
 
 
 def test_effective_token_floor_overrides_positive_claim(command_fixture, tmp_path):

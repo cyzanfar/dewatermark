@@ -9,10 +9,10 @@ Use the installed `dewatermark` package to inspect before changing text, choose 
 
 ## Workflow
 
-1. Check availability with `dewatermark capabilities`. If unavailable, suggest `pip install dewatermark` or run it through `uvx dewatermark`.
-2. Inspect pasted text with `dewatermark inspect --detector unicode`. For files or repositories, use `dewatermark check PATH --format json`.
+1. Check availability with `dewatermark capabilities`. If unavailable, suggest `pip install dewatermark` or run it through `uvx dewatermark`. Before using a statistical detector, run `dewatermark detectors doctor`; treat synthetic or uncalibrated fixtures as contract tests only.
+2. Inspect pasted text with `dewatermark inspect --detector unicode`. For files or repositories, use `dewatermark check PATH --format json`. For an unsaved editor buffer, pipe it through `dewatermark check --stdin-path FILE --format json` so the repository policy still applies.
 3. Explain actionable, contextual, and informational findings. Never infer the author, model, or vendor from an invisible character alone.
-4. For a transformation, create a content-bound plan with `dewatermark plan`. Review its detector, lossiness, permissions, quality policy, verification availability, limits, and digest.
+4. For a transformation, create a content-bound plan with `dewatermark plan`. Review its detector, lossiness, permissions, required and advisory quality gates, verification availability, limits, and digest. Use `--require-verified` when retaining an unverified statistical rewrite would violate the user's request.
 5. Apply only the exact reviewed plan with `dewatermark apply --plan-digest DIGEST --consent`. Network use and model downloads require separate explicit flags. Keep the safe Unicode profile unless the user explicitly accepts lossy Latin-oriented normalization.
 6. Verify source and candidate with `dewatermark verify`, then report `detection_status`, `transformation_status`, `verification_status`, and `claim_scope` separately.
 
@@ -20,8 +20,9 @@ Use the installed `dewatermark` package to inspect before changing text, choose 
 
 ```bash
 printf '%s' "$TEXT" | dewatermark analyze --format json
-printf '%s' "$TEXT" | dewatermark sanitize --format json
 dewatermark check . --format sarif --output dewatermark.sarif
+dewatermark check --stdin-path src/app.py --format json < unsaved-buffer.txt
+dewatermark detectors doctor
 dewatermark inspect --input input.txt --detector unicode
 dewatermark plan --input input.txt --mode sanitize --detector unicode
 ```
@@ -30,4 +31,4 @@ Do not place sensitive text in shell arguments or logs. Prefer stdin or local fi
 
 ## Claims
 
-Distinguish deterministic Unicode cleanup from statistical watermark mitigation. State the named scheme, detector, threshold, text length, model, and quality constraint for efficacy claims. Anthropic confirms marking for supported Claude models launched on or after August 2, 2026, but its public technical detector guidance is forthcoming; report Claude as unsupported rather than guessing its mechanism. Never promise universal removal.
+Distinguish deterministic Unicode cleanup from statistical watermark mitigation. State the named scheme, detector, key/configuration fingerprint, threshold, effective detector-token length, calibration population, model, and quality constraint for efficacy claims. Never promote a green conformance fixture into a production claim. Anthropic confirms marking for supported Claude models launched on or after August 2, 2026, but its public technical detector guidance is forthcoming; report Claude as unsupported rather than guessing its mechanism. Never promise universal removal.

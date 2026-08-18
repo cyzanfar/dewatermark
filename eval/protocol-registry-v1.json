@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "dewatermark-benchmark-core-v1",
+  "description": "Minimum strata and control contracts for detector-scoped text watermark mitigation evidence.",
+  "splits": [
+    {
+      "id": "calibration",
+      "purpose": "threshold and initial-strength calibration only"
+    },
+    {
+      "id": "development",
+      "purpose": "prompt, transform, quality-gate, and model selection"
+    },
+    {
+      "id": "final_test",
+      "purpose": "frozen, once-only comparative evaluation"
+    }
+  ],
+  "length_bins": [
+    {
+      "id": "lt64",
+      "label": "<64",
+      "minimum_inclusive": 0,
+      "maximum_exclusive": 64
+    },
+    {
+      "id": "64_127",
+      "label": "64-127",
+      "minimum_inclusive": 64,
+      "maximum_exclusive": 128
+    },
+    {
+      "id": "128_255",
+      "label": "128-255",
+      "minimum_inclusive": 128,
+      "maximum_exclusive": 256
+    },
+    {
+      "id": "256_511",
+      "label": "256-511",
+      "minimum_inclusive": 256,
+      "maximum_exclusive": 512
+    },
+    {
+      "id": "512_plus",
+      "label": "512+",
+      "minimum_inclusive": 512,
+      "maximum_exclusive": null
+    }
+  ],
+  "tasks": [
+    {
+      "id": "open_ended_prose",
+      "label": "Open-ended prose",
+      "required_checker_kinds": ["semantic", "factual", "protected_span"]
+    },
+    {
+      "id": "factual_qa",
+      "label": "Factual question answering",
+      "required_checker_kinds": ["answer_key", "atomic_claim", "citation"]
+    },
+    {
+      "id": "summarization",
+      "label": "Summarization",
+      "required_checker_kinds": ["source_grounding", "atomic_claim", "entity_number"]
+    },
+    {
+      "id": "translation",
+      "label": "Translation",
+      "required_checker_kinds": ["bidirectional_semantic", "target_language", "entity_number"]
+    },
+    {
+      "id": "code",
+      "label": "Code",
+      "required_checker_kinds": ["parse", "tests", "protected_span"]
+    },
+    {
+      "id": "mathematics",
+      "label": "Mathematics",
+      "required_checker_kinds": ["answer_key", "symbolic_or_numeric", "unit"]
+    },
+    {
+      "id": "structured_data",
+      "label": "Structured data",
+      "required_checker_kinds": ["schema", "exact_field", "parse"]
+    }
+  ],
+  "languages": [
+    {
+      "id": "en",
+      "label": "English",
+      "bcp47": "en",
+      "script": "Latn",
+      "coverage_group": "english"
+    },
+    {
+      "id": "es",
+      "label": "Spanish",
+      "bcp47": "es",
+      "script": "Latn",
+      "coverage_group": "other_latin"
+    },
+    {
+      "id": "ar",
+      "label": "Arabic",
+      "bcp47": "ar",
+      "script": "Arab",
+      "coverage_group": "arabic_or_persian"
+    },
+    {
+      "id": "hi",
+      "label": "Hindi",
+      "bcp47": "hi",
+      "script": "Deva",
+      "coverage_group": "indic"
+    },
+    {
+      "id": "zh-Hans",
+      "label": "Simplified Chinese",
+      "bcp47": "zh-Hans",
+      "script": "Hans",
+      "coverage_group": "chinese"
+    },
+    {
+      "id": "ko",
+      "label": "Korean",
+      "bcp47": "ko",
+      "script": "Kore",
+      "coverage_group": "korean"
+    }
+  ],
+  "cohorts": [
+    {
+      "id": "watermarked_positive",
+      "generated": true,
+      "required_metadata": ["generator_id", "decoding_config_sha256"]
+    },
+    {
+      "id": "matched_generator_null",
+      "generated": true,
+      "required_metadata": ["generator_id", "decoding_config_sha256", "paired_sample_id"]
+    },
+    {
+      "id": "human_control",
+      "generated": false,
+      "required_metadata": [
+        "content_sha256",
+        "license_id",
+        "source_date",
+        "domain",
+        "selection_rule_sha256",
+        "matching_rule_sha256",
+        "contamination_risk",
+        "memorization_risk",
+        "generator_exposed",
+        "rewriter_exposed"
+      ]
+    }
+  ],
+  "coverage_areas": [
+    "reproducible_identity",
+    "independent_splits",
+    "matched_controls",
+    "held_out_keys",
+    "length_coverage",
+    "task_coverage",
+    "language_coverage",
+    "detector_statistics",
+    "negative_effects",
+    "quality_preservation",
+    "human_evaluation",
+    "resource_accounting",
+    "artifact_handling",
+    "independent_replication"
+  ]
+}

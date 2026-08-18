@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/benchmark-observation-set-v1.json",
+  "title": "Dewatermark benchmark observation set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observation_set_id",
+    "sample_registry_sha256",
+    "run_manifest",
+    "detectors",
+    "conditions",
+    "requested_fprs",
+    "observations",
+    "resource_summary",
+    "human_review",
+    "reproduction"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "observation_set_id": { "$ref": "#/$defs/sha256" },
+    "sample_registry_sha256": { "$ref": "#/$defs/sha256" },
+    "run_manifest": { "type": "object" },
+    "detectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "manifest"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "role": { "enum": ["primary", "cross"] },
+          "manifest": { "type": "object" }
+        }
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "transform_manifest_sha256", "quality_gate_manifest_sha256"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "transform_manifest_sha256": { "$ref": "#/$defs/sha256" },
+          "quality_gate_manifest_sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "requested_fprs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+    },
+    "observations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "resource_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_size_bytes"],
+      "properties": {
+        "model_size_bytes": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "human_review": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "enum": ["not_run", "not_available"] },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "packet_sha256",
+            "assignment_sha256",
+            "protocol_sha256",
+            "reviewer_count",
+            "blinded",
+            "pre_registered",
+            "agreement"
+          ],
+          "properties": {
+            "state": { "const": "complete" },
+            "packet_sha256": { "$ref": "#/$defs/sha256" },
+            "assignment_sha256": { "$ref": "#/$defs/sha256" },
+            "protocol_sha256": { "$ref": "#/$defs/sha256" },
+            "reviewer_count": { "type": "integer", "minimum": 2 },
+            "blinded": { "const": true },
+            "pre_registered": { "const": true },
+            "agreement": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metric", "value", "ci95"],
+              "properties": {
+                "metric": { "enum": ["krippendorff_alpha", "fleiss_kappa"] },
+                "value": { "type": "number", "minimum": -1, "maximum": 1 },
+                "ci95": {
+                  "type": "array",
+                  "prefixItems": [
+                    { "type": "number", "minimum": -1, "maximum": 1 },
+                    { "type": "number", "minimum": -1, "maximum": 1 }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "reproduction": { "$ref": "#/$defs/reproduction" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "reproduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recipe_sha256",
+        "timeout_seconds",
+        "network_required",
+        "model_download_required"
+      ],
+      "properties": {
+        "recipe_sha256": { "$ref": "#/$defs/sha256" },
+        "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 604800 },
+        "network_required": { "type": "boolean" },
+        "model_download_required": { "type": "boolean" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sample_id",
+        "detector_id",
+        "condition_id",
+        "source_score",
+        "candidate_score",
+        "source_effective_tokens",
+        "candidate_effective_tokens",
+        "transformation_state",
+        "quality_gate_passed",
+        "task_check_passed",
+        "error_class",
+        "telemetry"
+      ],
+      "properties": {
+        "sample_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "detector_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "condition_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "source_score": { "type": "number" },
+        "candidate_score": { "type": "number" },
+        "source_effective_tokens": { "type": "integer", "minimum": 0 },
+        "candidate_effective_tokens": { "type": "integer", "minimum": 0 },
+        "transformation_state": { "enum": ["accepted", "failed", "abstained"] },
+        "quality_gate_passed": { "type": ["boolean", "null"] },
+        "task_check_passed": { "type": ["boolean", "null"] },
+        "error_class": { "type": ["string", "null"], "maxLength": 256 },
+        "telemetry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "wall_time_seconds",
+            "peak_rss_bytes",
+            "remote_queries",
+            "generated_tokens",
+            "estimated_cost_usd"
+          ],
+          "properties": {
+            "wall_time_seconds": { "type": "number", "minimum": 0 },
+            "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "remote_queries": { "type": "integer", "minimum": 0 },
+            "generated_tokens": { "type": "integer", "minimum": 0 },
+            "estimated_cost_usd": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    }
+  }
+}

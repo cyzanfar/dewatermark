@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from importlib import metadata
 from threading import RLock
 from typing import Any, Callable
 
 from .exceptions import ConfigurationError
-from .extension_safety import extension_identity, static_capability
+from .extension_safety import (
+    extension_identity,
+    manifests_match,
+    static_capability,
+    validate_reviewed_registration,
+)
 from .models import CapabilityManifest
 
 ProviderFactory = Callable[..., Any]
@@ -26,7 +32,7 @@ _detector_identities: dict[str, dict[str, Any]] = {}
 _detector_revisions: dict[str, int] = {}
 _detector_errors: dict[str, str] = {}
 _detector_entry_points: dict[str, Any] | None = None
-_detector_builtins_seeded = False
+_PUBLIC_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 def _entry_points(group: str) -> dict[str, Any]:
@@ -37,8 +43,11 @@ def _entry_points(group: str) -> dict[str, Any]:
         selected = eps.select(group=group) if hasattr(eps, "select") else eps.get(group, [])
         for entry_point in selected:
             name = entry_point.name
-            if type(name) is str and name.strip():
-                entries[name.strip().lower()] = entry_point
+            if type(name) is str and _PUBLIC_NAME.fullmatch(name.strip()):
+                normalized = name.strip().lower()
+                if normalized in entries:
+                    raise ConfigurationError("duplicate normalized extension entry-point name")
+                entries[normalized] = entry_point
     except Exception:
         failed = True
     if failed:
@@ -47,8 +56,8 @@ def _entry_points(group: str) -> dict[str, Any]:
 
 
 def _name(value: Any, kind: str) -> str:
-    if type(value) is not str or not value.strip():
-        raise ConfigurationError(f"{kind} name must be a non-empty string")
+    if type(value) is not str or not _PUBLIC_NAME.fullmatch(value.strip()):
+        raise ConfigurationError(f"{kind} name must be a registered identifier")
     return value.strip().lower()
 
 
@@ -61,15 +70,20 @@ def _provider_entries() -> dict[str, Any]:
 
 
 def _seed_detector_builtins() -> None:
-    global _detector_builtins_seeded
+    """Register built-ins only for an explicit load/discovery operation."""
     with _lock:
-        if not _detector_builtins_seeded:
-            from .detectors import builtin_detector_factories
+        from .detectors import builtin_detector_factories
 
-            for name, factory in builtin_detector_factories().items():
-                if name not in _detectors:
-                    register_detector(name, factory)
-            _detector_builtins_seeded = True
+        for name, factory in builtin_detector_factories().items():
+            if name not in _detectors:
+                register_detector(name, factory)
+
+
+def _builtin_detector_factories() -> dict[str, ProviderFactory]:
+    """Return static built-ins without mutating the active registry."""
+    from .detectors import builtin_detector_factories
+
+    return builtin_detector_factories()
 
 
 def _detector_entries() -> dict[str, Any]:
@@ -98,6 +112,31 @@ def register_provider(name: str, factory: ProviderFactory, *, replace: bool = Fa
         )
 
 
+def _registered_provider(
+    key: str,
+) -> tuple[ProviderFactory, CapabilityManifest, dict[str, Any]] | None:
+    """Return a registration only while its side-effect-free identity is unchanged."""
+    with _lock:
+        factory = _providers.get(key)
+        capability = _provider_manifests.get(key)
+        identity = _provider_identities.get(key)
+        revision = _provider_revisions.get(key)
+    if factory is None or capability is None or identity is None or revision is None:
+        return None
+    current_capability = static_capability(factory, ("transformer", "scorer"))
+    current_identity = extension_identity(
+        factory,
+        ("transformer", "scorer"),
+        revision=revision,
+    )
+    validate_reviewed_registration("provider", key, current_identity)
+    if not manifests_match(capability, current_capability) or current_identity != identity:
+        raise ConfigurationError(
+            "registered provider identity changed; explicitly replace the registration"
+        )
+    return factory, capability, dict(identity)
+
+
 def discover_providers() -> dict[str, ProviderFactory]:
     """Explicitly load installed providers; listing alone never executes plugins."""
     for name in _provider_entries():
@@ -111,9 +150,10 @@ def discover_providers() -> dict[str, ProviderFactory]:
 
 def get_provider(name: str) -> ProviderFactory:
     key = _name(name, "provider")
-    with _lock:
-        if key in _providers:
-            return _providers[key]
+    registered = _registered_provider(key)
+    if registered is not None:
+        validate_reviewed_registration("provider", key, registered[2])
+        return registered[0]
     entry_point = _provider_entries().get(key)
     if entry_point is None:
         raise ConfigurationError("unknown provider; call list_providers() for available names")
@@ -134,13 +174,12 @@ def get_provider(name: str) -> ProviderFactory:
 def provider_manifest(name: str, *, kind: str = "transformer") -> CapabilityManifest | None:
     """Return an already-registered static manifest without loading plugins."""
     key = _name(name, "provider")
-    with _lock:
-        factory = _providers.get(key)
-        capability = _provider_manifests.get(key)
-    if factory is None:
+    registered = _registered_provider(key)
+    if registered is None:
         if key in _provider_entries():
             return None
         raise ConfigurationError("unknown provider; call list_providers() for available names")
+    _, capability, _ = registered
     if isinstance(capability, CapabilityManifest) and capability.kind == kind:
         return capability
     return None
@@ -149,16 +188,13 @@ def provider_manifest(name: str, *, kind: str = "transformer") -> CapabilityMani
 def provider_identity(name: str, *, kind: str = "transformer") -> dict[str, Any] | None:
     """Return the immutable registration identity without loading entry points."""
     key = _name(name, "provider")
-    with _lock:
-        capability = _provider_manifests.get(key)
-        identity = _provider_identities.get(key)
-    if capability is None or capability.kind != kind or identity is None:
+    registered = _registered_provider(key)
+    if registered is None:
         if key in _provider_entries():
             return None
-        if key not in _providers:
-            raise ConfigurationError("unknown provider; call list_providers() for available names")
-        return None
-    return dict(identity)
+        raise ConfigurationError("unknown provider; call list_providers() for available names")
+    _, capability, identity = registered
+    return identity if capability.kind == kind else None
 
 
 def list_providers() -> tuple[str, ...]:
@@ -198,6 +234,27 @@ def register_detector(name: str, factory: ProviderFactory, *, replace: bool = Fa
         _detector_identities[key] = extension_identity(factory, "detector", revision=revision)
 
 
+def _registered_detector(
+    key: str,
+) -> tuple[ProviderFactory, CapabilityManifest, dict[str, Any]] | None:
+    """Return a detector registration only while its static identity is unchanged."""
+    with _lock:
+        factory = _detectors.get(key)
+        capability = _detector_manifests.get(key)
+        identity = _detector_identities.get(key)
+        revision = _detector_revisions.get(key)
+    if factory is None or capability is None or identity is None or revision is None:
+        return None
+    current_capability = static_capability(factory, "detector")
+    current_identity = extension_identity(factory, "detector", revision=revision)
+    validate_reviewed_registration("detector", key, current_identity)
+    if not manifests_match(capability, current_capability) or current_identity != identity:
+        raise ConfigurationError(
+            "registered detector identity changed; explicitly replace the registration"
+        )
+    return factory, capability, dict(identity)
+
+
 def discover_detectors() -> dict[str, ProviderFactory]:
     """Explicitly load detector plugins; listing alone never executes them."""
     _seed_detector_builtins()
@@ -213,9 +270,10 @@ def discover_detectors() -> dict[str, ProviderFactory]:
 def get_detector(name: str) -> ProviderFactory:
     _seed_detector_builtins()
     key = _name(name, "detector")
-    with _lock:
-        if key in _detectors:
-            return _detectors[key]
+    registered = _registered_detector(key)
+    if registered is not None:
+        validate_reviewed_registration("detector", key, registered[2])
+        return registered[0]
     entry_point = _detector_entries().get(key)
     if entry_point is None:
         raise ConfigurationError("unknown detector; call list_detectors() for available names")
@@ -240,15 +298,16 @@ def detector_manifest(name: str) -> CapabilityManifest | None:
     content-bound plan deliberately refuses to import them. Applications that
     trust a plugin can load/register it explicitly before planning.
     """
-    _seed_detector_builtins()
     key = _name(name, "detector")
-    with _lock:
-        factory = _detectors.get(key)
-        capability = _detector_manifests.get(key)
-    if factory is None:
+    registered = _registered_detector(key)
+    if registered is None:
+        factory = _builtin_detector_factories().get(key)
+        if factory is not None:
+            return static_capability(factory, "detector")
         if key in _detector_entries():
             return None
         raise ConfigurationError("unknown detector; call list_detectors() for available names")
+    _, capability, _ = registered
     if isinstance(capability, CapabilityManifest) and capability.kind == "detector":
         return capability
     return None
@@ -256,22 +315,24 @@ def detector_manifest(name: str) -> CapabilityManifest | None:
 
 def detector_identity(name: str) -> dict[str, Any] | None:
     """Return a registered detector identity without importing an entry point."""
-    _seed_detector_builtins()
     key = _name(name, "detector")
+    registered = _registered_detector(key)
     with _lock:
-        identity = _detector_identities.get(key)
-    if identity is not None:
-        return dict(identity)
+        next_revision = _detector_revisions.get(key, 0) + 1
+    if registered is not None:
+        return registered[2]
+    builtin = _builtin_detector_factories().get(key)
+    if builtin is not None:
+        return extension_identity(builtin, "detector", revision=next_revision)
     if key in _detector_entries() or key in _detectors:
         return None
     raise ConfigurationError("unknown detector; call list_detectors() for available names")
 
 
 def list_detectors() -> tuple[str, ...]:
-    _seed_detector_builtins()
     with _lock:
         registered = set(_detectors)
-    return tuple(sorted(registered | set(_detector_entries())))
+    return tuple(sorted(registered | set(_builtin_detector_factories()) | set(_detector_entries())))
 
 
 def detector_errors() -> dict[str, str]:

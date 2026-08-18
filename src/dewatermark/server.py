@@ -24,6 +24,35 @@ from .models import RemovalMode, SanitizeProfile
 MAX_BODY_BYTES = 2_000_000
 _POST_ROUTES = {"/analyze", "/inspect", "/sanitize", "/remove", "/plan", "/apply", "/verify"}
 _MODES = {"auto", "sanitize", "paraphrase", "full", "sira", "bias_inversion", "adversarial"}
+_REQUEST_FIELDS = {
+    "/analyze": frozenset({"text"}),
+    "/inspect": frozenset({"text", "detector"}),
+    "/sanitize": frozenset({"text", "profile"}),
+    "/remove": frozenset({"text", "mode"}),
+    "/plan": frozenset(
+        {
+            "text",
+            "mode",
+            "detector",
+            "options",
+            "allow_network",
+            "allow_model_download",
+            "require_verified",
+        }
+    ),
+    "/apply": frozenset(
+        {
+            "text",
+            "plan_digest",
+            "mode",
+            "detector",
+            "options",
+            "require_verified",
+            "consent",
+        }
+    ),
+    "/verify": frozenset({"source_text", "candidate_text", "detector"}),
+}
 
 
 def _is_json_content_type(value: str) -> bool:
@@ -37,10 +66,21 @@ def _bool(payload: dict[str, Any], name: str, default: bool = False) -> bool:
     return value
 
 
-def _mapping(payload: dict[str, Any], name: str) -> dict[str, Any]:
+def _closed_object(payload: dict[str, Any], allowed: Iterable[str]) -> None:
+    allowed_fields = allowed if isinstance(allowed, (set, frozenset)) else frozenset(allowed)
+    for key in payload:
+        if type(key) is not str or key not in allowed_fields:
+            raise ValueError("request contains unsupported fields")
+
+
+def _mapping(
+    payload: dict[str, Any], name: str, *, allowed: Iterable[str] | None = None
+) -> dict[str, Any]:
     value = payload.get(name, {})
-    if not isinstance(value, dict):
+    if type(value) is not dict:
         raise ValueError(f"{name} must be an object")
+    if allowed is not None:
+        _closed_object(value, allowed)
     return value
 
 
@@ -53,7 +93,7 @@ def _mode(payload: dict[str, Any], default: str = "auto") -> RemovalMode:
 
 def _profile(payload: dict[str, Any]) -> SanitizeProfile:
     value = payload.get("profile", "safe")
-    if value not in {"safe", "aggressive"}:
+    if not isinstance(value, str) or value not in {"safe", "aggressive"}:
         raise ValueError("profile is not supported")
     return cast(SanitizeProfile, value)
 
@@ -69,8 +109,12 @@ def _text(payload: dict[str, Any], name: str = "text", *, nonempty: bool = False
 
 def process_request(path: str, payload: dict[str, Any]) -> object:
     """Process an API operation without transport concerns (also useful to embedders)."""
-    if not isinstance(payload, dict):
+    if type(payload) is not dict:
         raise ValueError("request body must be a JSON object")
+    allowed = _REQUEST_FIELDS.get(path)
+    if allowed is None:
+        raise KeyError(path)
+    _closed_object(payload, allowed)
     if path == "/analyze":  # legacy alias with its original response shape
         return analyze(_text(payload))
     if path == "/inspect":
@@ -95,7 +139,11 @@ def process_request(path: str, payload: dict[str, Any]) -> object:
             options=_mapping(payload, "options"),
         )
     if path == "/apply":
-        consent = _mapping(payload, "consent")
+        consent = _mapping(
+            payload,
+            "consent",
+            allowed=("transformation", "network", "model_download"),
+        )
         return apply_plan(
             _text(payload, nonempty=True),
             _text(payload, "plan_digest", nonempty=True),
@@ -419,6 +467,11 @@ def openapi_schema() -> dict[str, Any]:
                 "string is not represented as independently verified watermark removal."
             ),
         },
+        # Authentication is optional on loopback and mandatory when the server
+        # is deliberately bound externally. Referencing the scheme here makes
+        # generated clients expose bearer-token configuration without claiming
+        # that every local deployment requires a token.
+        "security": [{"bearerAuth": []}, {}],
         "paths": paths,
         "components": {
             "securitySchemes": {

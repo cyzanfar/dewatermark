@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="dewatermark">
+  <rect width="64" height="64" rx="14" fill="#090b12"/>
+  <path d="M17 15h30a4 4 0 0 1 4 4v26a4 4 0 0 1-4 4H17a4 4 0 0 1-4-4V19a4 4 0 0 1 4-4Z" fill="none" stroke="#87f5cb" stroke-width="4"/>
+  <path d="M23 25h18M23 32h13M23 39h18" fill="none" stroke="#f6f7fb" stroke-linecap="round" stroke-width="4"/>
+  <path d="m45 25 6-6M45 39l6 6" fill="none" stroke="#87f5cb" stroke-linecap="round" stroke-width="3"/>
+</svg>

@@ -1,0 +1,852 @@
+{
+  "components": {
+    "responses": {
+      "BadRequest": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Invalid request"
+      },
+      "Forbidden": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Origin or consent denied"
+      },
+      "Unauthorized": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Authentication required"
+      },
+      "UnsupportedMediaType": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "description": "Content-Type must be application/json"
+      }
+    },
+    "schemas": {
+      "AnalysisResponse": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "ApplyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "type": "object"
+          },
+          "input_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "operation": {
+            "const": "apply"
+          },
+          "output_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "plan_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "policy": {
+            "type": "object"
+          },
+          "result": {
+            "type": "object"
+          },
+          "schema_version": {
+            "const": "1.0"
+          }
+        },
+        "required": [
+          "schema_version",
+          "operation",
+          "plan_digest",
+          "input_sha256",
+          "output_sha256",
+          "consent",
+          "policy",
+          "result"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "InspectResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "detector_evidence": {
+            "type": "object"
+          },
+          "input_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "stats": {
+            "type": "object"
+          },
+          "unicode": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "schema_version",
+          "input_sha256",
+          "detector_evidence",
+          "unicode",
+          "stats"
+        ],
+        "type": "object"
+      },
+      "PlanResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "consent_required": {
+            "const": true
+          },
+          "detector": {
+            "type": "string"
+          },
+          "digest_algorithm": {
+            "const": "sha256"
+          },
+          "digest_is_authentication": {
+            "const": false
+          },
+          "execution": {
+            "type": "object"
+          },
+          "input_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "mode": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "sanitize",
+              "paraphrase",
+              "full",
+              "sira",
+              "bias_inversion",
+              "adversarial"
+            ],
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": false,
+            "properties": {
+              "best_of": {
+                "maximum": 6,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "beta": {
+                "maximum": 20,
+                "minimum": 0,
+                "type": "number"
+              },
+              "epsilon": {
+                "maximum": 0.9,
+                "minimum": 0.05,
+                "type": "number"
+              },
+              "passes": {
+                "maximum": 5,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "permissions": {
+            "type": "object"
+          },
+          "plan_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "policy": {
+            "type": "object"
+          },
+          "schema_version": {
+            "const": "1.0"
+          }
+        },
+        "required": [
+          "schema_version",
+          "input_sha256",
+          "mode",
+          "detector",
+          "options",
+          "permissions",
+          "policy",
+          "execution",
+          "plan_digest",
+          "consent_required"
+        ],
+        "type": "object"
+      },
+      "RemovalResponse": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "SanitizeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "cleaned_text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cleaned_text",
+          "changed"
+        ],
+        "type": "object"
+      },
+      "VerifyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "type": "object"
+          },
+          "before": {
+            "type": "object"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "claim_scope": {
+            "type": "string"
+          },
+          "detection_status": {
+            "enum": [
+              "detected",
+              "not_detected",
+              "insufficient_evidence",
+              "unsupported",
+              "configuration_mismatch",
+              "detector_error"
+            ]
+          },
+          "detector": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "source_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "verification_status": {
+            "enum": [
+              "verified_cleared",
+              "residual",
+              "not_verifiable",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "detector",
+          "source_sha256",
+          "candidate_sha256",
+          "detection_status",
+          "verification_status",
+          "claim_scope"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "opaque",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Local-first text inspection and consent-bound transformation. A changed string is not represented as independently verified watermark removal.",
+    "title": "dewatermark assurance API",
+    "version": "1.1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/analyze": {
+      "post": {
+        "operationId": "analyzeText",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Legacy alias for text inspection"
+      }
+    },
+    "/apply": {
+      "post": {
+        "operationId": "applyTransformation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "consent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "model_download": {
+                        "default": false,
+                        "type": "boolean"
+                      },
+                      "network": {
+                        "default": false,
+                        "type": "boolean"
+                      },
+                      "transformation": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "transformation"
+                    ],
+                    "type": "object"
+                  },
+                  "detector": {
+                    "default": "unicode",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "default": "auto",
+                    "enum": [
+                      "auto",
+                      "sanitize",
+                      "paraphrase",
+                      "full",
+                      "sira",
+                      "bias_inversion",
+                      "adversarial"
+                    ],
+                    "type": "string"
+                  },
+                  "options": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "best_of": {
+                        "maximum": 6,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "beta": {
+                        "maximum": 20,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "epsilon": {
+                        "maximum": 0.9,
+                        "minimum": 0.05,
+                        "type": "number"
+                      },
+                      "passes": {
+                        "maximum": 5,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "plan_digest": {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  "require_verified": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text",
+                  "plan_digest",
+                  "consent"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Apply the exact reviewed plan with explicit consent"
+      }
+    },
+    "/capabilities": {
+      "get": {
+        "operationId": "capabilities",
+        "responses": {
+          "200": {
+            "description": "Side-effect-free capabilities"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Healthy"
+          }
+        }
+      }
+    },
+    "/inspect": {
+      "post": {
+        "operationId": "inspectText",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "detector": {
+                    "default": "unicode",
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Inspect text without changing it"
+      }
+    },
+    "/plan": {
+      "post": {
+        "operationId": "planTransformation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "allow_model_download": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "allow_network": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "detector": {
+                    "default": "unicode",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "default": "auto",
+                    "enum": [
+                      "auto",
+                      "sanitize",
+                      "paraphrase",
+                      "full",
+                      "sira",
+                      "bias_inversion",
+                      "adversarial"
+                    ],
+                    "type": "string"
+                  },
+                  "options": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "best_of": {
+                        "maximum": 6,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "beta": {
+                        "maximum": 20,
+                        "minimum": 0,
+                        "type": "number"
+                      },
+                      "epsilon": {
+                        "maximum": 0.9,
+                        "minimum": 0.05,
+                        "type": "number"
+                      },
+                      "passes": {
+                        "maximum": 5,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "require_verified": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Create a content-bound, side-effect-free execution plan"
+      }
+    },
+    "/remove": {
+      "post": {
+        "operationId": "removeWatermarkLegacy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "default": "auto",
+                    "enum": [
+                      "auto",
+                      "sanitize",
+                      "paraphrase",
+                      "full",
+                      "sira",
+                      "bias_inversion",
+                      "adversarial"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Legacy one-step transformation; agents should use plan/apply"
+      }
+    },
+    "/sanitize": {
+      "post": {
+        "operationId": "sanitizeText",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "profile": {
+                    "default": "safe",
+                    "enum": [
+                      "safe",
+                      "aggressive"
+                    ],
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SanitizeResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Sanitize Unicode artifacts"
+      }
+    },
+    "/verify": {
+      "post": {
+        "operationId": "verifyTransformation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "candidate_text": {
+                    "type": "string"
+                  },
+                  "detector": {
+                    "default": "unicode-artifacts-v1",
+                    "type": "string"
+                  },
+                  "source_text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source_text",
+                  "candidate_text"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Verify with a named detector or explicitly abstain"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {}
+  ]
+}

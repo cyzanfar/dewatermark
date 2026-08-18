@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
 
 from .models import CapabilityManifest, DetectionEvidence
-from .quality import QualityReport
+from .quality import QualityGateDecision, QualityReport
+from .quality_gates import PairwiseAssessment
 
 
 @runtime_checkable
@@ -41,7 +42,27 @@ class PlannableRewriter(Rewriter, Protocol):
 class QualityGate(Protocol):
     @property
     def capability(self) -> CapabilityManifest: ...
-    def evaluate(self, source: str, candidate: str) -> QualityReport: ...
+    def evaluate(self, source: str, candidate: str) -> QualityGateDecision | QualityReport: ...
+
+
+@runtime_checkable
+class NLIAdapter(Protocol):
+    """Adapter consumed by :class:`BidirectionalNLIGate`."""
+
+    @property
+    def capability(self) -> CapabilityManifest: ...
+    def available(self) -> bool: ...
+    def entailment_probability(self, premise: str, hypothesis: str) -> float: ...
+
+
+@runtime_checkable
+class PairwiseQualityAdapter(Protocol):
+    """Adapter consumed by claim-QA, entity, citation, and task gates."""
+
+    @property
+    def capability(self) -> CapabilityManifest: ...
+    def available(self) -> bool: ...
+    def assess(self, source: str, candidate: str) -> PairwiseAssessment: ...
 
 
 @runtime_checkable

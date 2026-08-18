@@ -1,0 +1,104 @@
+name: Publish JavaScript package
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: publish-npm-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Validate and pack @cyzanfar/dewatermark-unicode
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref_type == 'tag') ||
+      (github.event_name == 'release' && github.event.release.prerelease == false &&
+       vars.NPM_PUBLISH_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Verify stable tag and every release version surface
+        working-directory: web
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+          const pythonMatch = fs
+            .readFileSync("../src/dewatermark/_version.py", "utf8")
+            .match(/^__version__ = "([^"]+)"$/m);
+          const citationMatch = fs
+            .readFileSync("../CITATION.cff", "utf8")
+            .match(/^version: (\S+)$/m);
+          const changelog = fs.readFileSync("../CHANGELOG.md", "utf8");
+          const stableSemver = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+
+          if (!stableSemver.test(version)) {
+            throw new Error("stable publishing refuses prerelease or non-SemVer versions");
+          }
+          if (
+            process.env.RELEASE_TAG !== `v${version}` ||
+            pythonMatch?.[1] !== version ||
+            citationMatch?.[1] !== version
+          ) {
+            throw new Error("release tag, Python, npm, and citation versions must match");
+          }
+          const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const releaseHeading = new RegExp(
+            `^## \\[${escapedVersion}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$`,
+            "m",
+          );
+          if (!releaseHeading.test(changelog)) {
+            throw new Error("stable publishing requires a dated changelog release heading");
+          }
+          NODE
+      - name: Validate package contents and tests
+        working-directory: web
+        run: |
+          npm run check
+          npm pack --dry-run
+          mkdir package
+          npm pack --ignore-scripts --pack-destination package
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: javascript-package
+          path: web/package/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish @cyzanfar/dewatermark-unicode
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@cyzanfar/dewatermark-unicode
+    permissions:
+      actions: read # Required to download the validated package artifact.
+      id-token: write # Required for npm trusted publishing and provenance.
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: javascript-package
+          path: package/
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish the validated tarball without lifecycle scripts
+        run: npm publish package/*.tgz --access public --provenance --ignore-scripts

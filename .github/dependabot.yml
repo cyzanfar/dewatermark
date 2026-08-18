@@ -1,0 +1,28 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      python-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /integrations/vscode
+    schedule: {interval: weekly}
+    groups:
+      vscode-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /web
+    schedule: {interval: weekly}
+  - package-ecosystem: gradle
+    directory: /integrations/jetbrains
+    schedule: {interval: weekly}
+    groups:
+      jetbrains-dependencies: {patterns: ["*"]}
+  - package-ecosystem: docker
+    directory: /
+    schedule: {interval: weekly}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    groups:
+      github-actions: {patterns: ["*"]}

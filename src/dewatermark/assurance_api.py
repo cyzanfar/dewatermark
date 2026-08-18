@@ -17,15 +17,27 @@ from typing import Any, Mapping, Optional
 from .assurance import inspect as detector_inspect
 from .assurance import verify as detector_verify
 from .config import DewatermarkConfig, get_config
-from .extension_safety import extension_identity
+from .exceptions import ConfigurationError
+from .extension_safety import (
+    ReviewedExtensionMismatch,
+    extension_identity,
+    reviewed_extension_scope,
+)
 from .pipeline import VALID_MODES, remove
 from .providers import detector_identity, detector_manifest, provider_identity, provider_manifest
+from .quality import QualityGateBinding
 from .runtime import plan
 from .unicode import analyze
 
 PLAN_SCHEMA_VERSION = "1.0"
 VERIFY_SCHEMA_VERSION = "1.0"
 _OPTION_NAMES = {"passes", "epsilon", "beta", "best_of"}
+_OPTION_DEFAULTS: dict[str, int | float] = {
+    "passes": 2,
+    "epsilon": 0.3,
+    "beta": 6.0,
+    "best_of": 3,
+}
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PUBLIC_CAPABILITY_METADATA = {
     "calibration",
@@ -41,6 +53,20 @@ _PUBLIC_CAPABILITY_METADATA = {
     "threat_models",
     "threshold",
     "tokenizer_revision",
+}
+_CAPABILITY_FIELDS = {
+    "identifier",
+    "kind",
+    "version",
+    "schemes",
+    "description",
+    "network_required",
+    "model_download_possible",
+    "requires_secret",
+    "minimum_characters",
+    "calibrated",
+    "independent",
+    "metadata",
 }
 
 
@@ -88,6 +114,7 @@ def local_only_config(config: Optional[DewatermarkConfig] = None) -> Dewatermark
         rewriter_provider=None,
         semantic_scorer=None,
         quality_gate=None,
+        quality_gates=(),
         chunker=None,
     )
 
@@ -108,23 +135,12 @@ def _safe_config_identifier(value: Optional[str]) -> Optional[str]:
     return f"sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
-def _type_identifier(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    module = getattr(value, "__module__", None)
-    qualname = getattr(value, "__qualname__", None)
-    if isinstance(module, str) and isinstance(qualname, str):
-        return f"{module}.{qualname}"
-    kind = type(value)
-    return f"{kind.__module__}.{kind.__qualname__}"
-
-
 def _detector_policy(identifier: str, cfg: DewatermarkConfig) -> dict[str, Any]:
     capability = detector_manifest(identifier)
     registration = detector_identity(identifier)
     if capability is None or registration is None:
         raise ValueError(
-            f"detector {identifier!r} has no loaded static capability manifest; "
+            "detector has no loaded static capability manifest; "
             "explicitly load or register the trusted detector before planning"
         )
     public_metadata = capability.to_dict()["metadata"]
@@ -168,7 +184,7 @@ def _policy(
         manifest = provider_manifest(cfg.rewriter_provider)
         if manifest is None:
             raise ValueError(
-                f"provider {cfg.rewriter_provider!r} has no loaded static transformer "
+                "provider has no loaded static transformer "
                 "manifest; explicitly load or register the trusted provider before planning"
             )
         transformer_registration = provider_identity(cfg.rewriter_provider)
@@ -190,7 +206,7 @@ def _policy(
         scorer_manifest = provider_manifest(cfg.scorer_provider, kind="scorer")
         if scorer_manifest is None:
             raise ValueError(
-                f"scorer {cfg.scorer_provider!r} has no loaded static scorer manifest; "
+                "scorer has no loaded static scorer manifest; "
                 "explicitly load or register the trusted scorer before planning"
             )
         scorer_registration = provider_identity(cfg.scorer_provider, kind="scorer")
@@ -205,10 +221,23 @@ def _policy(
     quality_gate = None
     if mode != "sanitize" and cfg.quality_gate is not None:
         quality_gate = extension_identity(cfg.quality_gate, "quality_gate", instance_sensitive=True)
+    quality_gates: list[dict[str, Any]] = []
+    if mode != "sanitize":
+        for item in cfg.quality_gates:
+            binding = item if type(item) is QualityGateBinding else QualityGateBinding(item)
+            quality_gates.append(
+                {
+                    "required": binding.required,
+                    **extension_identity(
+                        binding.gate,
+                        "quality_gate",
+                        instance_sensitive=True,
+                    ),
+                }
+            )
     semantic_scorer = None
     if (
         mode != "sanitize"
-        and cfg.quality_gate is None
         and cfg.semantic_scorer is not None
         and cfg.quality_min_semantic_score is not None
     ):
@@ -253,6 +282,7 @@ def _policy(
         "quality_max_length_ratio": cfg.quality_max_length_ratio,
         "quality_min_semantic_score": cfg.quality_min_semantic_score,
         "quality_gate": quality_gate,
+        "quality_gates": quality_gates,
         "semantic_scorer": semantic_scorer,
         "chunker": chunker,
         "require_verified": bool(require_verified),
@@ -276,10 +306,18 @@ def _bind_extension_requirements(
         "rewriter_capability",
         "scorer_capability",
         "quality_gate",
+        "quality_gates",
         "semantic_scorer",
         "chunker",
     ):
         value = public.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, Mapping):
+                    continue
+                nested = item.get("capability")
+                capabilities.append(nested if isinstance(nested, Mapping) else item)
+            continue
         if not isinstance(value, Mapping):
             continue
         nested = value.get("capability")
@@ -305,6 +343,72 @@ def _bind_extension_requirements(
         )
 
 
+def _registration_identity(value: Mapping[str, Any]) -> dict[str, Any]:
+    registration = value.get("registration")
+    if not isinstance(registration, Mapping):
+        raise PlanMismatchError("reviewed extension registration is incomplete")
+    capability = {key: value[key] for key in _CAPABILITY_FIELDS if key in value}
+    return {"capability": capability, **dict(registration)}
+
+
+def _reviewed_extensions(
+    cfg: DewatermarkConfig,
+    detector: str,
+    policy: Mapping[str, Any],
+) -> tuple[list[tuple[Any, Mapping[str, Any]]], dict[tuple[str, str], Mapping[str, Any]]]:
+    public = policy.get("config")
+    if not isinstance(public, Mapping):
+        raise PlanMismatchError("reviewed extension policy is incomplete")
+    targets: list[tuple[Any, Mapping[str, Any]]] = []
+    registrations: dict[tuple[str, str], Mapping[str, Any]] = {}
+
+    detector_policy = public.get("detector")
+    if not isinstance(detector_policy, Mapping):
+        raise PlanMismatchError("reviewed detector policy is incomplete")
+    detector_registration = detector_policy.get("registration")
+    if not isinstance(detector_registration, Mapping):
+        raise PlanMismatchError("reviewed detector registration is incomplete")
+    registrations[("detector", detector.strip().lower())] = detector_registration
+
+    for name, policy_key in (
+        (cfg.rewriter_provider, "rewriter_capability"),
+        (cfg.scorer_provider, "scorer_capability"),
+    ):
+        value = public.get(policy_key)
+        if name and isinstance(value, Mapping):
+            registrations[("provider", name.strip().lower())] = _registration_identity(value)
+
+    for target, policy_key in (
+        (cfg.quality_gate, "quality_gate"),
+        (cfg.semantic_scorer, "semantic_scorer"),
+        (cfg.chunker, "chunker"),
+    ):
+        value = public.get(policy_key)
+        if target is not None and isinstance(value, Mapping):
+            targets.append((target, value))
+
+    configured_gates = list(cfg.quality_gates)
+    reviewed_gates = public.get("quality_gates")
+    if reviewed_gates:
+        if not isinstance(reviewed_gates, list) or len(reviewed_gates) != len(configured_gates):
+            raise PlanMismatchError("reviewed quality-gate policy is incomplete")
+        for configured, reviewed in zip(configured_gates, reviewed_gates):
+            if not isinstance(reviewed, Mapping):
+                raise PlanMismatchError("reviewed quality-gate policy is incomplete")
+            binding = (
+                configured
+                if type(configured) is QualityGateBinding
+                else QualityGateBinding(configured)
+            )
+            targets.append(
+                (
+                    binding.gate,
+                    {key: value for key, value in reviewed.items() if key != "required"},
+                )
+            )
+    return targets, registrations
+
+
 def _validate_text(text: Any, cfg: DewatermarkConfig, name: str = "text") -> str:
     if not isinstance(text, str) or not text:
         raise ValueError(f"{name} must be a non-empty string")
@@ -313,12 +417,37 @@ def _validate_text(text: Any, cfg: DewatermarkConfig, name: str = "text") -> str
     return text
 
 
-def _options(value: Optional[Mapping[str, Any]]) -> dict[str, Any]:
-    options = dict(value or {})
-    unknown = sorted(set(options) - _OPTION_NAMES)
-    if unknown:
-        raise ValueError("request contains an unsupported removal option")
-    return options
+def _options(value: Optional[dict[str, Any]]) -> dict[str, Any]:
+    if value is not None and type(value) is not dict:
+        raise ValueError("options must be an object")
+    options: dict[str, Any] = {}
+    if value is not None:
+        # Iterate an exact built-in dict and validate each key before lookup.
+        # This keeps side-effect-free planning from invoking custom Mapping,
+        # key hashing, conversion, or representation hooks.
+        for key in value:
+            if type(key) is not str or key not in _OPTION_NAMES:
+                raise ValueError("request contains an unsupported removal option")
+            options[key] = dict.__getitem__(value, key)
+    normalized = {**_OPTION_DEFAULTS, **options}
+    passes = normalized["passes"]
+    epsilon = normalized["epsilon"]
+    beta = normalized["beta"]
+    best_of = normalized["best_of"]
+    if type(passes) is not int or not 1 <= passes <= 5:
+        raise ValueError("passes must be an integer between 1 and 5")
+    if type(epsilon) not in (int, float) or not 0.05 <= epsilon <= 0.9:
+        raise ValueError("epsilon must be a number between 0.05 and 0.9")
+    if type(beta) not in (int, float) or not 0.0 <= beta <= 20.0:
+        raise ValueError("beta must be a number between 0 and 20")
+    if type(best_of) is not int or not 1 <= best_of <= 6:
+        raise ValueError("best_of must be an integer between 1 and 6")
+    return {
+        "passes": passes,
+        "epsilon": float(epsilon),
+        "beta": 0.0 if beta == 0 else float(beta),
+        "best_of": best_of,
+    }
 
 
 def inspect_text(
@@ -350,12 +479,19 @@ def create_plan(
     allow_network: bool = False,
     allow_model_download: bool = False,
     require_verified: bool = False,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[dict[str, Any]] = None,
     config: Optional[DewatermarkConfig] = None,
 ) -> dict[str, Any]:
     """Create a content-bound, side-effect-free transformation plan."""
-    if mode not in VALID_MODES:
+    if type(mode) is not str or mode not in VALID_MODES:
         raise ValueError("mode is not supported")
+    for name, value in (
+        ("allow_network", allow_network),
+        ("allow_model_download", allow_model_download),
+        ("require_verified", require_verified),
+    ):
+        if type(value) is not bool:
+            raise ValueError(f"{name} must be a boolean")
     detector = _identifier(detector, "detector")
     if allow_model_download and not allow_network:
         raise ValueError("allow_model_download=true requires allow_network=true")
@@ -366,8 +502,8 @@ def create_plan(
     execution = plan(
         mode,  # type: ignore[arg-type]
         cfg,
-        passes=int(normalized_options.get("passes", 2)),
-        best_of=int(normalized_options.get("best_of", 3)),
+        passes=normalized_options["passes"],
+        best_of=normalized_options["best_of"],
     ).to_dict()
     execution["backend"] = _safe_config_identifier(str(execution["backend"]))
     _bind_extension_requirements(execution, policy, cfg)
@@ -404,22 +540,25 @@ def apply_plan(
     allow_network: bool = False,
     allow_model_download: bool = False,
     require_verified: bool = False,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Optional[dict[str, Any]] = None,
     config: Optional[DewatermarkConfig] = None,
 ) -> dict[str, Any]:
     """Apply exactly the reviewed plan and return an auditable envelope."""
     if not consent:
         raise ConsentRequiredError("apply requires explicit consent=true")
-    reviewed = create_plan(
-        text,
-        mode,
-        detector=detector,
-        allow_network=allow_network,
-        allow_model_download=allow_model_download,
-        require_verified=require_verified,
-        options=options,
-        config=config,
-    )
+    try:
+        reviewed = create_plan(
+            text,
+            mode,
+            detector=detector,
+            allow_network=allow_network,
+            allow_model_download=allow_model_download,
+            require_verified=require_verified,
+            options=options,
+            config=config,
+        )
+    except ConfigurationError:
+        raise PlanMismatchError("reviewed extension policy is no longer available") from None
     if not isinstance(plan_digest, str) or not hmac.compare_digest(
         plan_digest, reviewed["plan_digest"]
     ):
@@ -427,13 +566,18 @@ def apply_plan(
             "plan digest does not match text, detector, mode, options, permissions, or policy"
         )
     cfg = _request_config(allow_network, allow_model_download, require_verified, config)
-    result = remove(
-        text,
-        mode=mode,  # type: ignore[arg-type]
-        detector=detector,
-        config=cfg,
-        **_options(options),
-    )
+    targets, registrations = _reviewed_extensions(cfg, detector, reviewed["policy"])
+    try:
+        with reviewed_extension_scope(targets, registrations):
+            result = remove(
+                text,
+                mode=mode,  # type: ignore[arg-type]
+                detector=detector,
+                config=cfg,
+                **reviewed["options"],
+            )
+    except ReviewedExtensionMismatch:
+        raise PlanMismatchError("reviewed extension identity changed before execution") from None
     return {
         "schema_version": "1.0",
         "operation": "apply",

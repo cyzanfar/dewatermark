@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, NoReturn, Optional, Sequence
 
 from . import __version__, analyze, capabilities, plan, remove, sanitize
+from .adapter_packs import list_adapter_packs, materialize_adapter_pack
+from .agent_skill import agent_skill_path, materialize_agent_skill
 from .assurance_api import (
     ConsentRequiredError,
     PlanMismatchError,
@@ -19,15 +21,23 @@ from .assurance_api import (
     verify_text,
 )
 from .config import DewatermarkConfig
+from .detector_tools import (
+    conform_reference_detectors,
+    discover_detector_capabilities,
+    doctor_detectors,
+)
 from .exceptions import DewatermarkError
 from .models import SCHEMA_VERSION
+from .reference_detectors import ReferenceScheme
 from .scanner import (
     baseline_fingerprints,
     changed_lines_from_unified_diff,
+    path_is_selected,
     scan_paths,
     scan_text,
     to_sarif,
 )
+from .scanner_config import resolve_scanner_config
 from .schemas import public_schema
 from .scoring import load
 
@@ -36,6 +46,8 @@ EXIT_FINDINGS = 1
 EXIT_USAGE = 2
 EXIT_BACKEND = 3
 EXIT_PROCESSING = 4
+_MAX_CLI_TEXT_BYTES = 16 * 1024 * 1024
+_MAX_CLI_AUXILIARY_BYTES = 16 * 1024 * 1024
 
 _MODES = (
     "auto",
@@ -64,10 +76,10 @@ def _add_assurance_options(command: argparse.ArgumentParser) -> None:
     command.add_argument("text", nargs="?", help="text; omit to read stdin")
     command.add_argument("--input", type=Path, help="read UTF-8 text from a file")
     command.add_argument("--mode", choices=_MODES, default="auto", help="transformation mode")
-    command.add_argument("--passes", type=int, default=2, help="rewrite pass count")
-    command.add_argument("--epsilon", type=float, default=0.3, help="SIRA mask fraction")
-    command.add_argument("--beta", type=float, default=6.0, help="bias-inversion strength")
-    command.add_argument("--best-of", type=int, default=3, help="candidate count")
+    command.add_argument("--passes", type=int, default=2, help="rewrite pass count (1-5)")
+    command.add_argument("--epsilon", type=float, default=0.3, help="SIRA mask fraction (0.05-0.9)")
+    command.add_argument("--beta", type=float, default=6.0, help="bias-inversion strength (0-20)")
+    command.add_argument("--best-of", type=int, default=3, help="candidate count (1-6)")
     command.add_argument("--detector", default="unicode", help="registered detector name")
     command.add_argument(
         "--require-verified",
@@ -121,10 +133,14 @@ def _parser() -> argparse.ArgumentParser:
                 default="auto",
                 help="transformation mode",
             )
-            cmd.add_argument("--passes", type=int, default=2, help="rewrite pass count")
-            cmd.add_argument("--epsilon", type=float, default=0.3, help="SIRA mask fraction")
-            cmd.add_argument("--beta", type=float, default=6.0, help="bias-inversion strength")
-            cmd.add_argument("--best-of", type=int, default=3, help="candidate count")
+            cmd.add_argument("--passes", type=int, default=2, help="rewrite pass count (1-5)")
+            cmd.add_argument(
+                "--epsilon", type=float, default=0.3, help="SIRA mask fraction (0.05-0.9)"
+            )
+            cmd.add_argument(
+                "--beta", type=float, default=6.0, help="bias-inversion strength (0-20)"
+            )
+            cmd.add_argument("--best-of", type=int, default=3, help="candidate count (1-6)")
             cmd.add_argument("--detector", help="registered detector name")
             cmd.add_argument(
                 "--require-verified",
@@ -164,6 +180,55 @@ def _parser() -> argparse.ArgumentParser:
         "--detector", default="unicode-artifacts-v1", help="registered detector name"
     )
     sub.add_parser("capabilities", help="show installed features without network or model loading")
+    skill = sub.add_parser(
+        "skill",
+        help="locate or install the bundled AI-agent workflow",
+        description="Locate or safely copy the bundled remove-text-watermarks agent skill.",
+    )
+    skill_sub = skill.add_subparsers(dest="skill_command", required=True)
+    skill_sub.add_parser("path", help="print the filesystem path to the bundled skill")
+    skill_install = skill_sub.add_parser(
+        "install", help="copy the skill into a new directory without overwriting files"
+    )
+    skill_install.add_argument("--output", type=Path, required=True)
+    detectors = sub.add_parser(
+        "detectors",
+        help="inventory and validate detector integrations without sending text",
+        description=(
+            "Inspect static detector manifests or run the packaged synthetic-reference "
+            "vectors. Listing and doctor never import entry-point plugins, start commands, "
+            "load models, or open sockets."
+        ),
+    )
+    detector_sub = detectors.add_subparsers(dest="detector_command", required=True)
+    detector_sub.add_parser(
+        "list",
+        help="list canonical static capabilities and aliases without loading plugins",
+    )
+    detector_sub.add_parser(
+        "doctor",
+        help="audit static pins, abstentions, and claim boundaries",
+    )
+    detector_conformance = detector_sub.add_parser(
+        "conformance",
+        help="run dependency-free public vectors for the built-in research fixtures",
+    )
+    detector_conformance.add_argument(
+        "--scheme",
+        choices=("all", "kgw", "unigram", "tournament"),
+        default="all",
+        help="synthetic reference family to validate (never a vendor detector)",
+    )
+    detector_sub.add_parser(
+        "packs",
+        help="list pinned external adapter packs and their fail-closed status",
+    )
+    detector_scaffold = detector_sub.add_parser(
+        "scaffold",
+        help="copy one adapter pack into a new directory without overwriting files",
+    )
+    detector_scaffold.add_argument("--pack", choices=("kgw", "synthid"), required=True)
+    detector_scaffold.add_argument("--output", type=Path, required=True)
     schema = sub.add_parser("schema", help="print a packaged JSON Schema")
     schema.add_argument(
         "--kind",
@@ -172,6 +237,11 @@ def _parser() -> argparse.ArgumentParser:
             "evidence-receipt",
             "detector-capability",
             "command-detector",
+            "benchmark-evidence-bundle",
+            "benchmark-observation-set",
+            "benchmark-replication-record",
+            "benchmark-sample-registry",
+            "openapi",
         ),
         default="removal-result",
     )
@@ -179,11 +249,35 @@ def _parser() -> argparse.ArgumentParser:
     download.add_argument("--model", help="Hugging Face model identifier or local path")
     check = sub.add_parser("check", help="scan files for suspicious Unicode")
     check.add_argument("paths", nargs="*", type=Path)
+    check.add_argument(
+        "--stdin-path",
+        type=Path,
+        help="label stdin as this file and apply its repository scanner policy",
+    )
     check.add_argument("--format", choices=("text", "json", "sarif"), default="text")
     check.add_argument("--output", type=Path)
     check.add_argument("--fix", action="store_true")
     check.add_argument("--profile", choices=("safe", "aggressive"), default="safe")
-    check.add_argument("--max-file-bytes", type=int, default=2_000_000)
+    check.add_argument(
+        "--max-file-bytes",
+        type=int,
+        help="maximum bytes per file; overrides discovered scanner configuration",
+    )
+    config_group = check.add_mutually_exclusive_group()
+    config_group.add_argument(
+        "--config", type=Path, help="explicit .dewatermark.toml or pyproject.toml"
+    )
+    config_group.add_argument(
+        "--no-config", action="store_true", help="disable scanner configuration discovery"
+    )
+    check.add_argument(
+        "--exclude", action="append", default=[], help="additional cross-platform exclude glob"
+    )
+    check.add_argument(
+        "--extension",
+        action="append",
+        help="file extension to scan; repeat to replace configured extensions",
+    )
     check.add_argument("--baseline", type=Path, help="JSON finding baseline for comparison")
     check.add_argument("--write-baseline", type=Path, help="write finding fingerprints as JSON")
     check.add_argument("--suppress", action="append", default=[], help="finding suppression token")
@@ -203,15 +297,31 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _read_bounded_file(path: Path, *, maximum: int, label: str) -> str:
+    if not path.is_file():
+        raise _CliUsageError(f"{label} must be a regular file")
+    with path.open("rb") as handle:
+        raw = handle.read(maximum + 1)
+    if len(raw) > maximum:
+        raise _CliUsageError(f"{label} exceeds the supported size limit")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeError:
+        raise _CliUsageError(f"{label} must be valid UTF-8") from None
+
+
 def _read(args: argparse.Namespace) -> str:
     if args.text is not None and args.input is not None:
         raise _CliUsageError("provide only one of positional text or --input")
     if args.input:
-        return args.input.read_text(encoding="utf-8")
+        return _read_bounded_file(args.input, maximum=_MAX_CLI_TEXT_BYTES, label="input")
     if args.text is not None:
         return args.text
     if not sys.stdin.isatty():
-        return sys.stdin.read()
+        value = sys.stdin.read(_MAX_CLI_TEXT_BYTES + 1)
+        if len(value.encode("utf-8")) > _MAX_CLI_TEXT_BYTES:
+            raise _CliUsageError("standard input exceeds the supported size limit")
+        return value
     raise _CliUsageError("text is required on stdin, as an argument, or with --input")
 
 
@@ -221,12 +331,20 @@ def _read_verify(args: argparse.Namespace) -> tuple[str, str]:
     if args.candidate is not None and args.candidate_input is not None:
         raise _CliUsageError("provide only one of candidate or --candidate-input")
     source = (
-        args.source_input.read_text(encoding="utf-8")
+        _read_bounded_file(
+            args.source_input,
+            maximum=_MAX_CLI_TEXT_BYTES,
+            label="source input",
+        )
         if args.source_input is not None
         else args.source
     )
     candidate = (
-        args.candidate_input.read_text(encoding="utf-8")
+        _read_bounded_file(
+            args.candidate_input,
+            maximum=_MAX_CLI_TEXT_BYTES,
+            label="candidate input",
+        )
         if args.candidate_input is not None
         else args.candidate
     )
@@ -247,7 +365,9 @@ def _assurance_options(args: argparse.Namespace) -> dict[str, Any]:
 def _read_baseline(path: Optional[Path]) -> frozenset[str]:
     if path is None:
         return frozenset()
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(
+        _read_bounded_file(path, maximum=_MAX_CLI_AUXILIARY_BYTES, label="baseline")
+    )
     if isinstance(payload, dict):
         payload = payload.get("fingerprints", [])
     if not isinstance(payload, list) or not all(isinstance(item, str) for item in payload):
@@ -275,6 +395,24 @@ def _remove_one(text: str, args: argparse.Namespace, cfg: DewatermarkConfig) -> 
     ).to_dict()
 
 
+def _removal_failed(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return True
+    report = result.get("report")
+    return not isinstance(report, dict) or report.get("status") == "failed"
+
+
+def _emit_jsonl_failure(line_number: int, error: str) -> None:
+    _emit(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "line": line_number,
+            "status": "failed",
+            "error": error,
+        }
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -296,21 +434,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return EXIT_OK
         if args.command == "apply":
-            _emit(
-                apply_plan(
-                    _read(args),
-                    args.plan_digest,
-                    args.mode,
-                    detector=args.detector,
-                    consent=args.consent,
-                    allow_network=args.allow_network,
-                    allow_model_download=args.allow_model_download,
-                    require_verified=args.require_verified,
-                    options=_assurance_options(args),
-                    config=DewatermarkConfig.from_env(),
-                )
+            applied = apply_plan(
+                _read(args),
+                args.plan_digest,
+                args.mode,
+                detector=args.detector,
+                consent=args.consent,
+                allow_network=args.allow_network,
+                allow_model_download=args.allow_model_download,
+                require_verified=args.require_verified,
+                options=_assurance_options(args),
+                config=DewatermarkConfig.from_env(),
             )
-            return EXIT_OK
+            _emit(applied)
+            return EXIT_PROCESSING if _removal_failed(applied.get("result")) else EXIT_OK
         if args.command == "verify":
             source, candidate = _read_verify(args)
             _emit(verify_text(source, candidate, args.detector))
@@ -318,6 +455,58 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "capabilities":
             _emit(capabilities())
             return EXIT_OK
+        if args.command == "skill":
+            if args.skill_command == "path":
+                _emit({"name": "remove-text-watermarks", "path": str(agent_skill_path())})
+                return EXIT_OK
+            created = materialize_agent_skill(args.output)
+            _emit(
+                {
+                    "status": "created",
+                    "name": "remove-text-watermarks",
+                    "output": str(args.output),
+                    "files": [path.relative_to(args.output).as_posix() for path in created],
+                }
+            )
+            return EXIT_OK
+        if args.command == "detectors":
+            if args.detector_command == "list":
+                _emit(
+                    {
+                        "side_effect_free": True,
+                        "detectors": [
+                            entry.to_dict() for entry in discover_detector_capabilities()
+                        ],
+                    }
+                )
+                return EXIT_OK
+            if args.detector_command == "doctor":
+                doctor_report = doctor_detectors()
+                _emit(doctor_report.to_dict())
+                return EXIT_OK if doctor_report.passed else EXIT_PROCESSING
+            if args.detector_command == "packs":
+                _emit({"side_effect_free": True, "packs": list(list_adapter_packs())})
+                return EXIT_OK
+            if args.detector_command == "scaffold":
+                created = materialize_adapter_pack(args.pack, args.output)
+                _emit(
+                    {
+                        "status": "created",
+                        "pack": args.pack,
+                        "output": str(args.output),
+                        "files": [path.name for path in created],
+                    }
+                )
+                return EXIT_OK
+            scheme_choices: dict[str, tuple[ReferenceScheme, ...]] = {
+                "kgw": ("kgw-word-v1",),
+                "unigram": ("unigram-word-v1",),
+                "tournament": ("tournament-word-v1",),
+            }
+            selected = scheme_choices.get(args.scheme)
+            conformance_report = conform_reference_detectors(selected)
+            _emit(conformance_report.to_dict())
+            return EXIT_OK if conformance_report.passed else EXIT_PROCESSING
         if args.command == "schema":
             _emit(public_schema(args.kind))
             return EXIT_OK
@@ -334,53 +523,125 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             serve(args.host, args.port, args.api_key_env)
             return EXIT_OK
         if args.command == "check":
+            if args.paths and args.stdin_path is not None:
+                raise _CliUsageError("--stdin-path cannot be combined with path arguments")
+            config_start = (
+                args.paths[0]
+                if len(args.paths) == 1
+                else (args.stdin_path.parent if args.stdin_path is not None else Path.cwd())
+            )
+            scanner_config = resolve_scanner_config(
+                args.config,
+                start=config_start,
+                discover=not args.no_config,
+            )
+            policy_root = (
+                Path(scanner_config.source).parent
+                if scanner_config.source is not None
+                else config_start
+            )
             baseline = _read_baseline(args.baseline)
             changed_lines = (
-                changed_lines_from_unified_diff(args.diff.read_text(encoding="utf-8"))
+                changed_lines_from_unified_diff(
+                    _read_bounded_file(
+                        args.diff,
+                        maximum=_MAX_CLI_AUXILIARY_BYTES,
+                        label="diff",
+                    )
+                )
                 if args.diff
                 else None
             )
             dispositions = (
                 ("actionable", "contextual", "informational")
                 if args.all_findings
-                else ("actionable",)
+                else scanner_config.dispositions
             )
+            suppressions = (*scanner_config.suppressions, *args.suppress)
+            exclude_patterns = (*scanner_config.exclude, *args.exclude)
+            extensions = tuple(args.extension) if args.extension else scanner_config.extensions
+            max_file_bytes = (
+                args.max_file_bytes
+                if args.max_file_bytes is not None
+                else scanner_config.max_file_bytes
+            )
+            if not 1 <= max_file_bytes <= 1_000_000_000:
+                raise _CliUsageError("max file bytes is outside the supported range")
             if args.paths:
                 report = scan_paths(
                     args.paths,
-                    max_file_bytes=args.max_file_bytes,
+                    max_file_bytes=max_file_bytes,
                     fix=args.fix,
                     profile=args.profile,
                     baseline=baseline,
-                    suppressions=args.suppress,
+                    suppressions=suppressions,
                     changed_lines=changed_lines,
                     dispositions=dispositions,
                     new_only=args.new_only,
+                    exclude_patterns=exclude_patterns,
+                    extensions=extensions,
+                    policy_root=policy_root,
                 )
             elif not sys.stdin.isatty():
                 from .scanner import ScanReport
 
-                report = ScanReport(
-                    1,
+                if args.fix:
+                    raise _CliUsageError("--fix requires filesystem path arguments")
+                if args.diff is not None:
+                    raise _CliUsageError("--diff requires filesystem path arguments")
+                source_text = sys.stdin.read(max_file_bytes + 1)
+                if len(source_text.encode("utf-8")) > max_file_bytes:
+                    raise _CliUsageError("standard input exceeds max file bytes")
+                stdin_selected = args.stdin_path is None or path_is_selected(
+                    args.stdin_path,
+                    root=policy_root,
+                    exclude_patterns=exclude_patterns,
+                    extensions=extensions,
+                )
+                stdin_findings = (
                     scan_text(
-                        sys.stdin.read(),
+                        source_text,
+                        path=str(args.stdin_path) if args.stdin_path is not None else "<stdin>",
                         baseline=baseline,
-                        suppressions=args.suppress,
+                        suppressions=suppressions,
                         dispositions=dispositions,
                         new_only=args.new_only,
-                    ),
+                    )
+                    if stdin_selected
+                    else ()
+                )
+                report = ScanReport(
+                    int(stdin_selected),
+                    stdin_findings,
+                    configuration={
+                        "max_file_bytes": max_file_bytes,
+                        "fix": False,
+                        "profile": args.profile,
+                        "new_only": args.new_only,
+                        "extensions": sorted(extensions),
+                        "exclude_patterns": sorted(exclude_patterns),
+                        "dispositions": sorted(dispositions),
+                        "suppression_count": len(suppressions),
+                        "baseline_count": len(baseline),
+                        "diff_filter": False,
+                    },
                 )
             else:
+                if args.stdin_path is not None:
+                    raise _CliUsageError("--stdin-path requires piped stdin")
                 report = scan_paths(
                     [Path(".")],
-                    max_file_bytes=args.max_file_bytes,
+                    max_file_bytes=max_file_bytes,
                     fix=args.fix,
                     profile=args.profile,
                     baseline=baseline,
-                    suppressions=args.suppress,
+                    suppressions=suppressions,
                     changed_lines=changed_lines,
                     dispositions=dispositions,
                     new_only=args.new_only,
+                    exclude_patterns=exclude_patterns,
+                    extensions=extensions,
+                    policy_root=policy_root,
                 )
             if args.write_baseline:
                 args.write_baseline.write_text(
@@ -462,25 +723,47 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     continue
                 try:
                     payload = json.loads(line)
-                    source = payload["text"] if isinstance(payload, dict) else str(payload)
-                except (json.JSONDecodeError, KeyError, TypeError):
+                    if not isinstance(payload, dict) or type(payload.get("text")) is not str:
+                        raise TypeError
+                    source = payload["text"]
+                except (json.JSONDecodeError, TypeError):
                     had_errors = True
-                    _emit(
-                        {
-                            "schema_version": SCHEMA_VERSION,
-                            "line": line_number,
-                            "status": "failed",
-                            "error": "line is not valid JSON with a text field",
-                        }
+                    _emit_jsonl_failure(
+                        line_number,
+                        "line is not valid JSON with a text field",
                     )
                     continue
-                result = _remove_one(source, args, cfg)
+                try:
+                    result = _remove_one(source, args, cfg)
+                except PermissionError:
+                    had_errors = True
+                    _emit_jsonl_failure(line_number, "line operation is not permitted")
+                    continue
+                except DewatermarkError:
+                    had_errors = True
+                    _emit_jsonl_failure(
+                        line_number,
+                        "line backend operation failed; details redacted",
+                    )
+                    continue
+                except (ValueError, OSError):
+                    had_errors = True
+                    _emit_jsonl_failure(line_number, "line contains invalid input")
+                    continue
+                except Exception:
+                    had_errors = True
+                    _emit_jsonl_failure(
+                        line_number,
+                        "line processing failed; details redacted",
+                    )
+                    continue
                 result["line"] = line_number
                 _emit(result)
+                had_errors = had_errors or _removal_failed(result)
             return EXIT_PROCESSING if had_errors else EXIT_OK
         result = _remove_one(text, args, cfg)
         _emit(result["cleaned_text"] if args.format == "text" else result, args.format)
-        return EXIT_OK
+        return EXIT_PROCESSING if _removal_failed(result) else EXIT_OK
     except _CliUsageError as exc:
         print(json.dumps({"status": "failed", "error": str(exc)}), file=sys.stderr)
         return EXIT_USAGE
@@ -498,14 +781,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             file=sys.stderr,
         )
         return EXIT_USAGE
-    except (ValueError, OSError):
-        print(json.dumps({"status": "failed", "error": "invalid input"}), file=sys.stderr)
-        return EXIT_USAGE
     except PermissionError:
         print(
             json.dumps({"status": "failed", "error": "operation is not permitted"}), file=sys.stderr
         )
         return EXIT_BACKEND
+    except (ValueError, OSError):
+        print(json.dumps({"status": "failed", "error": "invalid input"}), file=sys.stderr)
+        return EXIT_USAGE
     except DewatermarkError:
         print(
             json.dumps({"status": "failed", "error": "backend operation failed; details redacted"}),

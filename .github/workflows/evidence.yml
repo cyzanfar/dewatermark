@@ -1,0 +1,90 @@
+name: Synthetic evidence conformance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "eval/**"
+      - "schemas/benchmark-*.json"
+      - "src/dewatermark/bounded_process.py"
+      - "src/dewatermark/schemas.py"
+      - "tests/test_eval_*.py"
+      - ".github/workflows/evidence.yml"
+  pull_request:
+    paths:
+      - "eval/**"
+      - "schemas/benchmark-*.json"
+      - "src/dewatermark/bounded_process.py"
+      - "src/dewatermark/schemas.py"
+      - "tests/test_eval_*.py"
+      - ".github/workflows/evidence.yml"
+  schedule:
+    - cron: "31 8 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  HF_HUB_OFFLINE: "1"
+  HF_DATASETS_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+
+jobs:
+  replay:
+    name: Offline deterministic replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e .
+      - name: Create, verify, replay, and re-verify the synthetic fixture
+        shell: bash
+        run: |
+          source_dir="$RUNNER_TEMP/evidence-source"
+          replay_dir="$RUNNER_TEMP/evidence-replay"
+          dewatermark-evidence reference-protocol --output-directory "$source_dir"
+          dewatermark-evidence verify "$source_dir/evidence.json"
+          dewatermark-evidence replay "$source_dir/evidence.json" --workspace "$replay_dir"
+          dewatermark-evidence replay "$source_dir/evidence.json" \
+            --workspace "$replay_dir" --execute
+          dewatermark-evidence verify "$replay_dir/reproduced/evidence.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          source = json.loads(
+              (temporary / "evidence-source/evidence.json").read_text(encoding="utf-8")
+          )
+          reproduced = json.loads(
+              (temporary / "evidence-replay/reproduced/evidence.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          assert source["bundle_id"] == reproduced["bundle_id"]
+          assert source["purpose"] == "harness_conformance"
+          assert source["claim_eligibility"]["comparative_performance_eligible"] is False
+          assert source["reproduction"]["network_required"] is False
+          assert source["reproduction"]["model_download_required"] is False
+          PY
+      - name: Upload content-free synthetic evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: synthetic-evidence-conformance-${{ github.sha }}
+          path: ${{ runner.temp }}/evidence-source/
+          if-no-files-found: error
+          retention-days: 14

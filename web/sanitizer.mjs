@@ -141,6 +141,38 @@ function contextDecision(points, position, category, safeRule, validTags) {
   return [false, category === "bidi_control" ? "actionable" : "contextual", "unknown policy context"];
 }
 
+function normalizationEdit(before, after) {
+  if (before === after) return null;
+  const source = Array.from(before);
+  const target = Array.from(after);
+  let prefix = 0;
+  while (prefix < source.length && prefix < target.length && source[prefix] === target[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < source.length - prefix &&
+    suffix < target.length - prefix &&
+    source[source.length - 1 - suffix] === target[target.length - 1 - suffix]
+  ) suffix += 1;
+  const original = source.slice(prefix, source.length - suffix).join("");
+  const replacement = target.slice(prefix, target.length - suffix).join("");
+  const action = original && replacement ? "replace" : original ? "delete" : "insert";
+  const codepoint = original
+    ? Array.from(original).map((character) => `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}`).join(" ")
+    : "<insertion>";
+  return {
+    index: prefix,
+    byteOffset: new TextEncoder().encode(source.slice(0, prefix).join("")).length,
+    codepoint,
+    category: "normalization",
+    action,
+    original,
+    replacement,
+    disposition: "informational",
+    context: "NFC canonical normalization",
+    stage: "normalization",
+  };
+}
+
 export function inspectText(text) {
   if (typeof text !== "string") throw new TypeError("text must be a string");
   const points = Array.from(text);
@@ -201,10 +233,13 @@ export function sanitizeTextWithReport(text) {
     const replacement = action === "space" ? " " : "";
     output.push(replacement);
     counts[category] = (counts[category] || 0) + 1;
-    edits.push({ index, byteOffset, codepoint: `U+${value.toString(16).toUpperCase().padStart(4, "0")}`, category, action, replacement, disposition, context });
+    edits.push({ index, byteOffset, codepoint: `U+${value.toString(16).toUpperCase().padStart(4, "0")}`, category, action, original: character, replacement, disposition, context, stage: "policy" });
     byteOffset += new TextEncoder().encode(character).length;
   }
-  const cleanedText = output.join("").normalize("NFC");
+  const strippedText = output.join("");
+  const cleanedText = strippedText.normalize("NFC");
+  const normalization = normalizationEdit(strippedText, cleanedText);
+  if (normalization) edits.push(normalization);
   return { cleanedText, changed: cleanedText !== text, counts, edits, policyVersion: POLICY_VERSION };
 }
 

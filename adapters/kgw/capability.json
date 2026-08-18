@@ -1,0 +1,37 @@
+{
+  "calibrated": false,
+  "description": "Pinned upstream KGW token-ID fixture adapter; not natural-language or vendor detection.",
+  "identifier": "reference-upstream/kgw-simple1-token-fixture-v1",
+  "independent": true,
+  "kind": "detector",
+  "metadata": {
+    "calibration": "not_calibrated",
+    "command_protocol_version": "1.0",
+    "configuration_sha256": "b773074d85f03ebd9172fb940b0bcd821e7a796575082eb5a896e5f0bd0c0dbe",
+    "golden_conformance": {
+      "passed": true,
+      "recorded_device": "cpu",
+      "recorded_torch_version": "2.4.1",
+      "report_sha256": "5c81adf085e7ee62b3ed44cac29355badfaee241bc5fb8fac1076b91c94cc122",
+      "vectors_sha256": "989a683c627e749f5a08108315c8f82c45e08f9409d10e8811e6539772b333fc"
+    },
+    "minimum_effective_tokens": 32,
+    "production_detection": false,
+    "score_direction": "higher",
+    "source": "https://github.com/jwkirchenbauer/lm-watermarking",
+    "source_file_sha256": "512c40644bc9e9932a8674bbf13046c1a4e92db429cff92afc9e90d2226896fc",
+    "source_revision": "82922516930c02f8aa322765defdb5863d07a00e",
+    "status": "offline_upstream_token_fixture",
+    "threshold": 4.0,
+    "tokenizer_revision": "public-token-id-fixture-v1",
+    "vendor_equivalent": false
+  },
+  "minimum_characters": 0,
+  "model_download_possible": false,
+  "network_required": false,
+  "requires_secret": false,
+  "schemes": [
+    "kgw/simple-1-token-fixture-v1"
+  ],
+  "version": "1.0"
+}

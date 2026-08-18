@@ -23,9 +23,12 @@ inspect -> classify -> plan -> transform -> verify -> attest
    what remains unknown.
 
 All active text-receiving extensions must provide a static capability manifest
-before construction or text access. Plans bind the active registration identity
-and fail if it is replaced before apply. This guards cooperative policy and
-consent; in-process Python extensions remain trusted dependencies rather than a
+before construction or text access. Plans bind the active registration plus a
+process-keyed fingerprint of observable class, instance, default, closure, and
+capability state. The binding is checked again immediately before first use;
+replacement or observable mutation requires re-registration/replanning. This
+guards cooperative policy and consent; opaque state, races after validation,
+and in-process Python semantics still require a trusted dependency or an OS
 sandbox boundary.
 
 ## Detection states
@@ -59,7 +62,7 @@ outcome instead.
 
 ## Evidence levels
 
-From weakest to strongest:
+The ordered evidence labels, from weakest to strongest, are:
 
 1. `none`: no detector evidence.
 2. `artifact`: literal channel inspection, such as contextual Unicode findings.
@@ -70,8 +73,20 @@ From weakest to strongest:
    calibration and a declared operating threshold.
 6. `provider_detector`: a provider-authorized detector for the deployed scheme.
 
-Only the final two levels can support a `mitigation_verified` claim. Even then,
-the claim is scoped to the recorded detector and operating point.
+`same_policy` is a separate deterministic case rather than a rung in that
+statistical ladder. The built-in Unicode sanitizer and verifier share the exact,
+versioned literal-codepoint policy, so they can substantiate the narrowly scoped
+`unicode_sanitized` result and paired `verified_cleared` verification state.
+They are not independent statistical implementations and do not substantiate a
+statistical `mitigation_verified` claim.
+
+For a statistical detector, the enforcement contract is the capability's
+literal `calibrated: true` **and** `independent: true` declarations. The
+`independent_detector` and `provider_detector` metadata labels describe the
+usual eligible evidence classes, but the label alone is not the enforcement
+switch. Those booleans are trust assertions made by the adapter operator; the
+runtime does not independently audit the underlying calibration study. Every
+claim remains scoped to the recorded detector and operating point.
 
 ## Threat models
 

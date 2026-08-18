@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import gc
+import json
+import os
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 import dewatermark
+import dewatermark.assurance_api as assurance_api_module
+import dewatermark.extension_safety as extension_safety
 import dewatermark.providers as registry
 import dewatermark.scoring as scoring
 from dewatermark import CapabilityManifest, DewatermarkConfig
@@ -23,9 +31,123 @@ from dewatermark.providers import (
     unregister_detector,
     unregister_provider,
 )
-from dewatermark.quality import QualityReport, evaluate_candidate, evaluate_quality
+from dewatermark.quality import (
+    QualityGateBinding,
+    QualityGateDecision,
+    QualityReport,
+    evaluate_candidate,
+    evaluate_quality,
+)
+from dewatermark.request_context import (
+    RequestContext,
+    ResourceBudgetExceeded,
+    extension_resource_accounting,
+    request_scope,
+)
 
 OFFLINE = DewatermarkConfig(local_lm_enabled=False)
+
+
+@pytest.mark.parametrize(
+    ("network_required", "model_download_possible", "declared", "expected"),
+    [
+        (True, False, "none", "network"),
+        (True, True, "none", "network"),
+        (False, True, "none", "model"),
+        (False, True, "network", "network"),
+        (False, False, "none", "none"),
+    ],
+)
+def test_extension_resource_accounting_cannot_weaken_static_resource_flags(
+    network_required, model_download_possible, declared, expected
+):
+    capability = CapabilityManifest(
+        identifier="accounting-floor",
+        kind="chunker",
+        network_required=network_required,
+        model_download_possible=model_download_possible,
+        metadata={"resource_accounting": declared},
+    )
+
+    assert extension_resource_accounting(capability) == expected
+
+
+def test_instance_identity_does_not_retain_extension_objects():
+    class Extension:
+        pass
+
+    extension = Extension()
+    identity = id(extension)
+    extension_safety.implementation_sha256(extension, instance_sensitive=True)
+    assert identity in extension_safety._instance_tokens
+
+    del extension
+    gc.collect()
+
+    assert identity not in extension_safety._instance_tokens
+
+
+def test_static_state_fingerprint_is_stable_and_one_way_across_processes():
+    root = Path(__file__).parents[1]
+    env = os.environ.copy()
+    python_paths = [str(root / "src"), str(root / "eval")]
+    if env.get("PYTHONPATH"):
+        python_paths.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(python_paths)
+    script = (
+        "import json,sys; "
+        "from dewatermark.extension_safety import static_state_sha256; "
+        "print(static_state_sha256(json.load(sys.stdin)))"
+    )
+
+    def fingerprint(value):
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=root,
+            env=env,
+            input=json.dumps(value),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return completed.stdout.strip()
+
+    private_value = "low-entropy-private-state"
+    first = fingerprint({"revision": 1, "value": private_value})
+    second = fingerprint({"revision": 1, "value": private_value})
+    changed = fingerprint({"revision": 2, "value": private_value})
+
+    assert len(first) == 64
+    assert first == second
+    assert first != changed
+    assert private_value not in first
+
+
+def test_plan_rejects_custom_option_mapping_without_invoking_hooks():
+    invoked: list[str] = []
+
+    class HostileMapping:
+        def __iter__(self):
+            invoked.append("iter")
+            raise AssertionError("custom mapping was iterated")
+
+        def __len__(self):
+            invoked.append("len")
+            raise AssertionError("custom mapping length was read")
+
+        def __getitem__(self, _key):
+            invoked.append("getitem")
+            raise AssertionError("custom mapping value was read")
+
+    with pytest.raises(ValueError, match="options must be an object"):
+        create_plan(
+            "private source",
+            "sanitize",
+            options=HostileMapping(),  # type: ignore[arg-type]
+            config=OFFLINE,
+        )
+    assert invoked == []
 
 
 def test_every_text_receiver_requires_a_static_manifest():
@@ -102,6 +224,111 @@ def test_declared_permissions_and_secrets_fail_before_construction():
         unregister_provider("network-denied")
         unregister_provider("secret-denied")
     assert constructed == []
+
+
+def test_zero_network_budget_blocks_every_extension_before_execution():
+    invoked: list[str] = []
+
+    class NetworkProvider:
+        capability = CapabilityManifest(
+            identifier="budget-network-provider", kind="transformer", network_required=True
+        )
+
+        def __init__(self, _config):
+            invoked.append("provider-construction")
+
+        def available(self):
+            return True
+
+        def rewrite(self, text, **_options):
+            invoked.append("provider-text")
+            return text, {}
+
+    class NetworkScorer:
+        capability = CapabilityManifest(
+            identifier="budget-network-scorer", kind="scorer", network_required=True
+        )
+
+        def __init__(self, _config):
+            invoked.append("scorer-construction")
+
+        def self_information(self, _text):
+            invoked.append("scorer-text")
+            return []
+
+    class NetworkDetector:
+        capability = CapabilityManifest(
+            identifier="budget-network-detector",
+            kind="detector",
+            network_required=True,
+        )
+
+        def __init__(self, _config):
+            invoked.append("detector-construction")
+
+        def available(self):
+            return True
+
+        def detect(self, _text):
+            invoked.append("detector-text")
+            return 0.0
+
+    class NetworkChunker:
+        capability = CapabilityManifest(
+            identifier="budget-network-chunker", kind="chunker", network_required=True
+        )
+
+        def split(self, text, _limit):
+            invoked.append("chunker-text")
+            return [text]
+
+    class NetworkGate:
+        capability = CapabilityManifest(
+            identifier="budget-network-gate", kind="quality_gate", network_required=True
+        )
+
+        def evaluate(self, _source, _candidate):
+            invoked.append("gate-text")
+            return QualityGateDecision(status="passed", checked_items=1)
+
+    register_provider("budget-network-provider", NetworkProvider)
+    register_provider("budget-network-scorer", NetworkScorer)
+    register_detector("budget-network-detector", NetworkDetector)
+    base = replace(OFFLINE, allow_remote_processing=True, max_remote_calls=0)
+    try:
+        result = dewatermark.remove(
+            "private source",
+            mode="full",
+            config=replace(base, rewriter_provider="budget-network-provider"),
+        )
+        assert result.report.transformation_status == "failed"
+
+        with pytest.raises(ResourceBudgetExceeded):
+            dewatermark.inspect("private source", "budget-network-detector", config=base)
+
+        scorer_config = replace(base, scorer_provider="budget-network-scorer")
+        with request_scope(RequestContext.from_config(scorer_config)):
+            with pytest.raises(scoring.ScorerUnavailable):
+                scoring.self_information("private source", scorer_config)
+
+        chunker_config = replace(base, chunker=NetworkChunker())
+        with request_scope(RequestContext.from_config(chunker_config)):
+            with pytest.raises(ResourceBudgetExceeded):
+                split_for_config("private source", chunker_config)
+
+        gate_config = replace(
+            base,
+            quality_gates=(QualityGateBinding(NetworkGate()),),
+        )
+        with request_scope(RequestContext.from_config(gate_config)):
+            gate_report = evaluate_candidate("private source", "private candidate", gate_config)
+        assert not gate_report.passed
+        assert gate_report.gate_outcomes[-1].status == "error"
+    finally:
+        unregister_provider("budget-network-provider")
+        unregister_provider("budget-network-scorer")
+        unregister_detector("budget-network-detector")
+    assert invoked == []
 
 
 def test_factories_receive_credential_stripped_config():
@@ -221,6 +448,276 @@ def test_registry_revision_rejects_same_manifest_replacement():
     assert invoked == []
 
 
+def test_mutable_registered_provider_state_invalidates_reviewed_plan():
+    invoked: list[str] = []
+
+    class Base:
+        replacement = "before"
+
+        def rewrite(self, _text, **_options):
+            invoked.append(self.replacement)
+            return self.replacement, {}
+
+    class Provider(Base):
+        capability = CapabilityManifest(identifier="state-bound", kind="transformer")
+
+        def __init__(self, _config):
+            pass
+
+        def available(self):
+            return True
+
+    register_provider("state-bound", Provider)
+    config = replace(OFFLINE, rewriter_provider="state-bound")
+    try:
+        planned = create_plan("private source", "full", config=config)
+        Base.replacement = "after"
+        with pytest.raises(PlanMismatchError, match="no longer available"):
+            apply_plan(
+                "private source",
+                planned["plan_digest"],
+                "full",
+                consent=True,
+                config=config,
+            )
+        with pytest.raises(dewatermark.ConfigurationError, match="identity changed"):
+            create_plan("private source", "full", config=config)
+
+        register_provider("state-bound", Provider, replace=True)
+        replacement_plan = create_plan("private source", "full", config=config)
+        assert replacement_plan["plan_digest"] != planned["plan_digest"]
+    finally:
+        unregister_provider("state-bound")
+    assert invoked == []
+
+
+def test_registered_factory_closure_and_defaults_are_plan_bound():
+    invoked: list[str] = []
+    closure_state = {"replacement": "before"}
+    default_state = {"enabled": False}
+
+    class Instance:
+        capability = CapabilityManifest(identifier="closure-bound", kind="transformer")
+
+        def available(self):
+            return True
+
+        def rewrite(self, _text, **_options):
+            invoked.append(closure_state["replacement"])
+            return closure_state["replacement"], {}
+
+    def factory(_config, state=default_state):
+        if state["enabled"]:
+            invoked.append("constructed")
+        return Instance()
+
+    factory.capability = Instance.capability  # type: ignore[attr-defined]
+    register_provider("closure-bound", factory)
+    config = replace(OFFLINE, rewriter_provider="closure-bound")
+    try:
+        planned = create_plan("private source", "full", config=config)
+        closure_state["replacement"] = "after"
+        default_state["enabled"] = True
+        with pytest.raises(PlanMismatchError):
+            apply_plan(
+                "private source",
+                planned["plan_digest"],
+                "full",
+                consent=True,
+                config=config,
+            )
+    finally:
+        unregister_provider("closure-bound")
+    assert invoked == []
+
+
+def test_mutable_registered_scorer_and_detector_state_invalidates_plans():
+    constructed: list[str] = []
+
+    class Scorer:
+        capability = CapabilityManifest(identifier="state-scorer", kind="scorer")
+        armed = False
+
+        def __init__(self, _config):
+            constructed.append("scorer")
+
+    class Detector:
+        capability = CapabilityManifest(identifier="state-detector", kind="detector")
+        armed = False
+
+        def __init__(self, _config):
+            constructed.append("detector")
+
+    register_provider("state-scorer", Scorer)
+    register_detector("state-detector", Detector)
+    scorer_config = replace(OFFLINE, scorer_provider="state-scorer")
+    try:
+        scorer_plan = create_plan("private source", "sira", config=scorer_config)
+        detector_plan = create_plan(
+            "private source", "sanitize", detector="state-detector", config=OFFLINE
+        )
+        Scorer.armed = True
+        Detector.armed = True
+        with pytest.raises(PlanMismatchError):
+            apply_plan(
+                "private source",
+                scorer_plan["plan_digest"],
+                "sira",
+                consent=True,
+                config=scorer_config,
+            )
+        with pytest.raises(PlanMismatchError):
+            apply_plan(
+                "private source",
+                detector_plan["plan_digest"],
+                "sanitize",
+                detector="state-detector",
+                consent=True,
+                config=OFFLINE,
+            )
+    finally:
+        unregister_provider("state-scorer")
+        unregister_detector("state-detector")
+    assert constructed == []
+
+
+def test_method_and_nested_manifest_mutation_requires_reregistration():
+    manifest = CapabilityManifest(
+        identifier="method-bound",
+        kind="transformer",
+        metadata={"configuration": {"revision": "one"}},
+    )
+
+    class Provider:
+        capability = manifest
+
+        def __init__(self, _config):
+            pass
+
+        def available(self):
+            return True
+
+        def rewrite(self, text, **_options):
+            return text, {}
+
+    register_provider("method-bound", Provider)
+    config = replace(OFFLINE, rewriter_provider="method-bound")
+    try:
+        method_plan = create_plan("private source", "full", config=config)
+
+        def changed_rewrite(self, _text, **_options):
+            return "changed", {}
+
+        Provider.rewrite = changed_rewrite
+        with pytest.raises(PlanMismatchError):
+            apply_plan(
+                "private source",
+                method_plan["plan_digest"],
+                "full",
+                consent=True,
+                config=config,
+            )
+
+        register_provider("method-bound", Provider, replace=True)
+        metadata_plan = create_plan("private source", "full", config=config)
+        manifest.metadata["configuration"]["revision"] = "two"
+        with pytest.raises(PlanMismatchError):
+            apply_plan(
+                "private source",
+                metadata_plan["plan_digest"],
+                "full",
+                consent=True,
+                config=config,
+            )
+    finally:
+        unregister_provider("method-bound")
+
+
+@pytest.mark.parametrize(
+    ("kind", "mode", "config_field"),
+    [
+        ("quality_gate", "full", "quality_gate"),
+        ("semantic_scorer", "full", "semantic_scorer"),
+        ("chunker", "sira", "chunker"),
+    ],
+)
+def test_direct_extension_instance_state_is_plan_bound(kind, mode, config_field):
+    class Extension:
+        capability = CapabilityManifest(identifier=f"state-{kind}", kind=kind)
+
+        def __init__(self):
+            self.armed = False
+
+    extension = Extension()
+    values = {config_field: extension}
+    if kind == "semantic_scorer":
+        values["quality_min_semantic_score"] = 0.5
+    config = replace(OFFLINE, **values)
+    planned = create_plan("private source", mode, config=config)
+    extension.armed = True
+    assert (
+        create_plan("private source", mode, config=config)["plan_digest"] != planned["plan_digest"]
+    )
+    with pytest.raises(PlanMismatchError):
+        apply_plan(
+            "private source",
+            planned["plan_digest"],
+            mode,
+            consent=True,
+            config=config,
+        )
+
+
+def test_apply_time_mutation_is_rejected_before_extension_text_access(monkeypatch):
+    invoked: list[str] = []
+
+    class Provider:
+        capability = CapabilityManifest(identifier="stable-provider", kind="transformer")
+
+        def __init__(self, _config):
+            pass
+
+        def available(self):
+            return True
+
+        def rewrite(self, text, **_options):
+            return text, {}
+
+    class Gate:
+        capability = CapabilityManifest(identifier="guarded-gate", kind="quality_gate")
+
+        def __init__(self):
+            self.armed = False
+
+        def evaluate(self, _source, _candidate):
+            invoked.append("armed" if self.armed else "safe")
+            return QualityReport(True, 1.0, 1.0)
+
+    gate = Gate()
+    register_provider("stable-provider", Provider)
+    config = replace(OFFLINE, rewriter_provider="stable-provider", quality_gate=gate)
+    planned = create_plan("private source", "full", config=config)
+    actual_remove = assurance_api_module.remove
+
+    def mutate_then_remove(*args, **kwargs):
+        gate.armed = True
+        return actual_remove(*args, **kwargs)
+
+    monkeypatch.setattr(assurance_api_module, "remove", mutate_then_remove)
+    try:
+        with pytest.raises(PlanMismatchError, match="changed before execution"):
+            apply_plan(
+                "private source",
+                planned["plan_digest"],
+                "full",
+                consent=True,
+                config=config,
+            )
+    finally:
+        unregister_provider("stable-provider")
+    assert invoked == []
+
+
 def test_agent_inspect_and_verify_do_not_load_untrusted_entry_points(monkeypatch):
     loaded: list[bool] = []
 
@@ -235,6 +732,28 @@ def test_agent_inspect_and_verify_do_not_load_untrusted_entry_points(monkeypatch
     with pytest.raises(ValueError, match="static capability manifest"):
         verify_text("private source", "candidate", "unloaded", config=OFFLINE)
     assert loaded == []
+
+
+@pytest.mark.parametrize(
+    "group",
+    [registry.ENTRY_POINT_GROUP, registry.DETECTOR_ENTRY_POINT_GROUP],
+)
+def test_entry_point_discovery_rejects_case_normalized_name_collisions(monkeypatch, group):
+    class EntryPoint:
+        def __init__(self, name):
+            self.name = name
+
+        def load(self):
+            raise AssertionError("collision discovery must not load plugin code")
+
+    class EntryPoints:
+        def select(self, *, group):
+            return [EntryPoint("Collision"), EntryPoint("collision")]
+
+    monkeypatch.setattr(registry.metadata, "entry_points", lambda: EntryPoints())
+
+    with pytest.raises(dewatermark.ConfigurationError, match="discovery failed"):
+        registry._entry_points(group)
 
 
 def test_provider_and_paraphrase_paths_do_not_run_configured_scorer():
@@ -342,8 +861,16 @@ def test_sanitize_ignores_unused_unmanifested_extensions():
         chunker=Unmanifested(),
     )
     planned = create_plan("a\u200bb", "sanitize", config=config)
+    applied = apply_plan(
+        "a\u200bb",
+        planned["plan_digest"],
+        "sanitize",
+        consent=True,
+        config=config,
+    )
     result = dewatermark.remove("a\u200bb", mode="sanitize", config=config)
     assert planned["execution"]["available"] is True
+    assert applied["result"]["cleaned_text"] == "ab"
     assert result.cleaned_text == "ab"
 
 

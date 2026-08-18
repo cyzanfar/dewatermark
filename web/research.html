@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>How AI Text Watermarks Work — Detection &amp; Removal Research</title>
+  <meta name="description" content="A practical research map for Unicode, KGW, Unigram, distortion-free, SynthID Text, semantic, and retrieval-based AI text watermarks—and what removal evidence actually means.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://cyzanfar.github.io/text-watermark-remover/research.html">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="How AI text watermarks work — a detector-first research map">
+  <meta property="og:description" content="Understand Unicode channels, statistical token watermarks, semantic schemes, private marks, and the evidence needed to verify mitigation.">
+  <meta property="og:url" content="https://cyzanfar.github.io/text-watermark-remover/research.html">
+  <meta property="og:image" content="https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/assets/social-preview.png">
+  <meta property="og:image:width" content="1280">
+  <meta property="og:image:height" content="640">
+  <meta property="og:image:alt" content="dewatermark text watermark assurance toolkit">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="How AI text watermarks work — a detector-first research map">
+  <meta name="twitter:description" content="A practical map of text-watermark families and the evidence needed to verify mitigation.">
+  <meta name="twitter:image" content="https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/assets/social-preview.png">
+  <meta name="twitter:image:alt" content="dewatermark text watermark assurance toolkit">
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@type":"TechArticle",
+    "headline":"How AI Text Watermarks Work: Detection and Removal Evidence",
+    "description":"A detector-first map of text watermark families and defensible mitigation evidence.",
+    "author":{"@type":"Person","name":"Cyrus Anfar"},
+    "dateModified":"2026-08-17",
+    "mainEntityOfPage":"https://cyzanfar.github.io/text-watermark-remover/research.html",
+    "codeRepository":"https://github.com/cyzanfar/text-watermark-remover"
+  }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="./"><span aria-hidden="true">◫</span> dewatermark</a>
+    <nav aria-label="Main navigation"><a href="./#playground">Playground</a><a href="research.html">Research</a><a href="https://github.com/cyzanfar/text-watermark-remover/tree/main/docs">Docs</a><a class="nav-cta" href="https://github.com/cyzanfar/text-watermark-remover">GitHub ↗</a></nav>
+  </header>
+  <main id="main" class="article-page">
+    <header>
+      <p class="eyebrow">Detector-first field guide</p>
+      <h1>How AI text watermarks work—and what “removed” can mean.</h1>
+      <p class="lead">There is no single AI-text watermark. A reliable tool starts by naming the mechanism, detector, operating threshold, effective text length, and quality constraints.</p>
+    </header>
+
+    <section>
+      <h2>1. Literal Unicode channels</h2>
+      <p>Zero-width characters, Unicode Tags, variation selectors, unusual spacing, bidirectional controls, and lookalike characters can encode information without an obvious visual change. They are inspectable directly from code points, but context matters: the same joiner or selector may be necessary for emoji, Persian, Arabic, Indic scripts, or ideographic variation.</p>
+      <p><code>dewatermark</code> uses a versioned contextual safe policy. Lossy compatibility folding and cross-script confusable replacement stay behind a separate aggressive profile.</p>
+    </section>
+
+    <section>
+      <h2>2. Green-list statistical watermarks</h2>
+      <p>KGW-style methods bias generation toward a pseudorandom “green” subset of model tokens determined by prior context. A compatible detector reconstructs those subsets and tests whether the green-token count is unexpectedly high. Unigram variants use a fixed partition. Detection depends on the exact tokenizer, key, seeding rule, threshold, and effective number of scored tokens.</p>
+      <p class="citation">Primary sources: <a href="https://arxiv.org/abs/2301.10226">Kirchenbauer et al., A Watermark for Large Language Models</a> and <a href="https://arxiv.org/abs/2306.17439">Zhao et al., Provable Robust Watermarking for AI-Generated Text</a>.</p>
+    </section>
+
+    <section>
+      <h2>3. Distortion-free and tournament schemes</h2>
+      <p>Other schemes change sampling using keyed random variables while preserving the target distribution under stated assumptions. SynthID Text uses tournament-based sampling and a learned or Bayesian detector in its published reference stack. A public reference implementation can support a reproducible experiment, but it does not expose a private production key or prove equivalence to every product surface.</p>
+      <p class="citation">Primary sources: <a href="https://arxiv.org/abs/2307.15593">Kuditipudi et al., Robust Distortion-free Watermarks for Language Models</a> and the <a href="https://github.com/google-deepmind/synthid-text">Google DeepMind SynthID Text reference repository</a>.</p>
+    </section>
+
+    <section>
+      <h2>4. Semantic and retrieval provenance</h2>
+      <p>Semantic schemes can bind signals to sentence meaning rather than literal characters or a simple token partition. Retrieval provenance can compare submitted text with a provider-held generation corpus. Rephrasing may change a detector score, but provider-held history is not stored in the text and cannot be “removed” from it.</p>
+      <p>A package should report these as separate threat models rather than implying that Unicode deletion, paraphrasing, and provider-side provenance are interchangeable.</p>
+      <p class="citation">Primary semantic-watermark sources: <a href="https://arxiv.org/abs/2310.03991">Hou et al., SemStamp</a> and <a href="https://arxiv.org/abs/2310.06356">Liu et al., A Semantic Invariant Robust Watermark for Large Language Models</a>.</p>
+    </section>
+
+    <section>
+      <h2>5. Private provider schemes</h2>
+      <p>Anthropic confirms embedded text marking for supported models launched on or after August 2, 2026, while stating that technical detection guidance is forthcoming. Until a public compatible detector, keys/configuration, and operating guidance exist, an independent tool cannot substantiate a Claude-removal result. The detection outcome is <code>unsupported</code>; capability metadata records status <code>unsupported_pending_spec</code>.</p>
+      <p class="citation">Provider statement: <a href="https://support.claude.com/en/articles/16266773-how-claude-marks-ai-generated-content">How Claude marks AI-generated content</a>.</p>
+    </section>
+
+    <section>
+      <h2>A credible mitigation benchmark</h2>
+      <ol>
+        <li>Use disjoint calibration, development, and final-test populations.</li>
+        <li>Pair watermarked outputs with same-generator unwatermarked controls and independently sourced human controls.</li>
+        <li>Pre-register keys, thresholds, attacks, prompts, languages, tasks, and detector-token length bins.</li>
+        <li>Keep failures, detector errors, quality rejections, and abstentions in the denominator.</li>
+        <li>Report source and candidate TPR at fixed empirical FPRs with confidence intervals, plus false insertion and cross-detector confusion.</li>
+        <li>Require semantic, factual, entity, number, citation, structure, and task-specific preservation—not generic similarity alone.</li>
+        <li>Publish content-addressed manifests, aggregate no-text score tables, resource telemetry, and an independent replication record.</li>
+      </ol>
+      <p class="citation">Benchmark context: <a href="https://aclanthology.org/2024.acl-long.83/">WaterBench (ACL 2024)</a> and the repository's <a href="https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/BENCHMARK_PROTOCOL.md">DewatermarkBench protocol</a>.</p>
+      <p class="citation">Rewrite-attack sources: <a href="https://arxiv.org/abs/2509.23019">Hwang et al., LLM Watermark Evasion via Bias Inversion (BIRA)</a> and <a href="https://arxiv.org/abs/2505.05190">Cheng et al., Self-Information Rewrite Attacks (SIRA)</a>. The package contains approximations, not the authors' reference implementations or published efficacy results.</p>
+    </section>
+
+    <section>
+      <h2>The practical rule</h2>
+      <p>A string is not universally “watermark free.” The strongest defensible result is narrower: a named compatible detector was positive on the source, below its frozen threshold on the candidate, all required quality checks passed, and the evidence can be reproduced from a content-addressed manifest.</p>
+      <a class="button primary" href="./#playground">Try local Unicode inspection</a>
+      <a class="button" href="https://github.com/cyzanfar/text-watermark-remover">Inspect the implementation ↗</a>
+    </section>
+  </main>
+  <footer><div><a class="brand" href="./"><span aria-hidden="true">◫</span> dewatermark</a><p>Evidence-first text watermark assurance.</p></div><div><a href="https://github.com/cyzanfar/text-watermark-remover">GitHub</a><a href="https://pypi.org/project/dewatermark/">PyPI</a><a href="https://github.com/cyzanfar/text-watermark-remover/security">Security</a></div></footer>
+</body>
+</html>

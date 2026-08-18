@@ -4,7 +4,6 @@ import time
 from argparse import Namespace
 
 import pytest
-from adapters import AdapterContractError, CommandScheme, _split_command
 from manifest import (
     IncompatibleResumeError,
     append_checkpoint,
@@ -14,6 +13,8 @@ from manifest import (
     environment_manifest,
     finalize_manifest,
 )
+
+from adapters import AdapterContractError, CommandScheme, _public_mapping, _split_command
 
 
 def _sidecar(name="test", family="greenlist", source="fixture", minimum=2):
@@ -40,6 +41,24 @@ def _sidecar(name="test", family="greenlist", source="fixture", minimum=2):
             "report_sha256": "c" * 64,
         },
     }
+
+
+def test_public_adapter_projection_never_uses_arbitrary_type_names_or_reprs():
+    secret = "PRIVATE_ADAPTER_CLASS_BEARER_12345"
+
+    def forbidden(_self, *_args):
+        raise AssertionError("adapter projection invoked an object hook")
+
+    SecretObject = type(
+        secret,
+        (),
+        {"__repr__": forbidden, "__str__": forbidden, "__deepcopy__": forbidden},
+    )
+    projected = _public_mapping({"nested": {"value": SecretObject(), "api_key": "private-value"}})
+    rendered = json.dumps(projected)
+    assert secret not in rendered
+    assert "private-value" not in rendered
+    assert projected["nested"] == {"value": "<redacted>"}
 
 
 def test_command_adapter_versioned_contract(tmp_path):

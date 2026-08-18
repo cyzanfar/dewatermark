@@ -19,17 +19,19 @@ import math
 import os
 import re
 import shutil
-import signal
-import subprocess
-import time
-from dataclasses import dataclass, field
-from threading import Event, Thread
+from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Optional, Sequence, cast
 
+from .bounded_process import BoundedProcessFailure, run_bounded_process
 from .config import DewatermarkConfig, resolve
 from .exceptions import AdapterError
 from .models import CapabilityManifest, DetectionEvidence, DetectionStatus
-from .request_context import current_request_context
+from .request_context import (
+    RequestContext,
+    current_request_context,
+    extension_resource_accounting,
+    request_scope,
+)
 
 COMMAND_DETECTOR_PROTOCOL_VERSION = "1.0"
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30.0
@@ -108,7 +110,9 @@ def _public_json_value(value: Any, *, path: str = "configuration") -> Any:
                 raise ValueError(
                     f"{path} must contain public identifiers or fingerprints, not credentials"
                 )
-            result[raw_key] = _public_json_value(item, path=f"{path}.{raw_key}")
+            # Do not reflect an arbitrary configuration key through a nested
+            # validation error. Key names may themselves contain credentials.
+            result[raw_key] = _public_json_value(item, path="configuration value")
         return result
     if isinstance(value, (list, tuple)):
         return [_public_json_value(item, path=path) for item in value]
@@ -315,67 +319,6 @@ def _validate_limits(timeout_seconds: float, stdout_bytes: int, stderr_bytes: in
             raise ValueError(f"{name} must be between 1 and {_MAX_CAPTURE_BYTES}")
 
 
-@dataclass
-class _StreamCapture:
-    limit: int
-    retain: bool
-    data: bytearray = field(default_factory=bytearray)
-    count: int = 0
-    overflow: bool = False
-
-
-def _terminate_process(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
-    try:
-        if os.name != "nt":
-            os.killpg(process.pid, signal.SIGKILL)
-        else:
-            process.kill()
-    except (OSError, ProcessLookupError):
-        try:
-            process.kill()
-        except OSError:
-            pass
-
-
-def _read_bounded(
-    stream: Any,
-    capture: _StreamCapture,
-    overflow_event: Event,
-    process: subprocess.Popen[bytes],
-) -> None:
-    try:
-        while True:
-            chunk = stream.read(8192)
-            if not chunk:
-                return
-            capture.count += len(chunk)
-            remaining = max(0, capture.limit - len(capture.data))
-            if capture.retain and remaining:
-                capture.data.extend(chunk[:remaining])
-            if capture.count > capture.limit:
-                capture.overflow = True
-                overflow_event.set()
-                _terminate_process(process)
-                return
-    except (OSError, ValueError):
-        return
-
-
-def _write_request(stream: Any, payload: bytes) -> None:
-    try:
-        stream.write(payload)
-        stream.flush()
-    except (BrokenPipeError, OSError, ValueError):
-        pass
-    finally:
-        try:
-            stream.close()
-        except (OSError, ValueError):
-            pass
-
-
 def _run_bounded_command(
     command: tuple[str, ...],
     payload: bytes,
@@ -384,102 +327,39 @@ def _run_bounded_command(
     max_stdout_bytes: int,
     max_stderr_bytes: int,
 ) -> bytes:
-    """Run argv directly while bounding wall time and both output streams."""
-    popen_options: dict[str, Any] = {
-        "stdin": subprocess.PIPE,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-        "shell": False,
-        "env": _command_environment(),
-        "close_fds": True,
-    }
-    if os.name == "nt":
-        popen_options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
-        popen_options["start_new_session"] = True
+    """Run argv directly through the shared process-tree boundary."""
+
+    def checkpoint() -> None:
+        context = current_request_context()
+        if context is not None:
+            context.checkpoint()
+
     try:
-        process: subprocess.Popen[bytes] = subprocess.Popen(command, **popen_options)
-    except OSError:
-        raise CommandDetectorExecutionError(
-            "command detector could not be launched; process details were redacted"
-        ) from None
-    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
-    overflow_event = Event()
-    stdout = _StreamCapture(max_stdout_bytes, retain=True)
-    stderr = _StreamCapture(max_stderr_bytes, retain=False)
-    readers = (
-        Thread(
-            target=_read_bounded,
-            args=(process.stdout, stdout, overflow_event, process),
-            daemon=True,
-        ),
-        Thread(
-            target=_read_bounded,
-            args=(process.stderr, stderr, overflow_event, process),
-            daemon=True,
-        ),
-    )
-    writer = Thread(target=_write_request, args=(process.stdin, payload), daemon=True)
-    for thread in readers:
-        thread.start()
-    writer.start()
-    deadline = time.monotonic() + timeout_seconds
-    interrupted: Optional[BaseException] = None
-    timed_out = False
-    try:
-        while process.poll() is None:
-            context = current_request_context()
-            if context is not None:
-                try:
-                    context.checkpoint()
-                except (asyncio.CancelledError, Exception) as exc:
-                    interrupted = exc
-                    _terminate_process(process)
-                    break
-            if overflow_event.is_set():
-                _terminate_process(process)
-                break
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                _terminate_process(process)
-                break
-            time.sleep(min(0.01, remaining))
-        try:
-            process.wait(timeout=1.0)
-        except subprocess.TimeoutExpired:
-            _terminate_process(process)
-            process.wait(timeout=1.0)
-    finally:
-        writer.join(timeout=1.0)
-        for thread in readers:
-            thread.join(timeout=1.0)
-        # A normally-exited process closes both pipes, allowing the readers to
-        # drain before they are closed here.  On timeout, closing after the
-        # bounded join also releases readers held open by an inherited handle.
-        for stream in (process.stdout, process.stderr):
-            try:
-                stream.close()
-            except (OSError, ValueError):
-                pass
-        for thread in readers:
-            thread.join(timeout=0.1)
-    if interrupted is not None:
-        raise interrupted
-    if timed_out:
-        raise CommandDetectorExecutionError(
-            "command detector timed out; stdout and stderr were redacted"
+        result = run_bounded_process(
+            command,
+            payload,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+            environment=_command_environment(),
+            checkpoint=checkpoint,
         )
-    if stdout.overflow or stderr.overflow:
-        raise CommandDetectorExecutionError(
-            "command detector exceeded its output limit; stdout and stderr were redacted"
-        )
-    if process.returncode:
-        raise CommandDetectorExecutionError(
-            f"command detector exited with status {process.returncode}; "
-            "stdout and stderr were redacted"
-        )
-    return bytes(stdout.data)
+    except BoundedProcessFailure as exc:
+        if exc.kind == "launch_failed":
+            message = "command detector could not be launched; process details were redacted"
+        elif exc.kind == "timed_out":
+            message = "command detector timed out; stdout and stderr were redacted"
+        elif exc.kind == "output_limit":
+            message = "command detector exceeded its output limit; stdout and stderr were redacted"
+        elif exc.kind == "nonzero_exit":
+            message = (
+                f"command detector exited with status {exc.returncode}; "
+                "stdout and stderr were redacted"
+            )
+        else:
+            message = "command detector cleanup failed; process details were redacted"
+        raise CommandDetectorExecutionError(message) from None
+    return result.stdout
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -544,10 +424,7 @@ class CommandDetector:
         self.threshold = self._contract.threshold
 
     def __repr__(self) -> str:
-        return (
-            f"CommandDetector(identifier={self.capability.identifier!r}, "
-            f"protocol={self._contract.protocol_version!r})"
-        )
+        return "<command detector; representation redacted>"
 
     def available(self) -> bool:
         """Check only executable presence; never invoke it or import a plugin."""
@@ -618,9 +495,27 @@ class CommandDetector:
         if preflight is not None:
             return preflight
         context = current_request_context()
+        if context is None:
+            with request_scope(RequestContext.from_config(self._config)):
+                return self.detect(text)
         timeout = min(self._timeout_seconds, float(self._config.request_timeout))
-        if context is not None:
-            timeout = context.remaining_seconds(timeout)
+        timeout = context.remaining_seconds(timeout)
+        accounting = extension_resource_accounting(self.capability)
+        if accounting == "network":
+            # The child controls its own endpoints, so the parent conservatively
+            # reserves one external-command operation without publishing argv or
+            # an endpoint. Untrusted adapters still require OS/container policy.
+            context.before_remote_call(
+                "https://external-command-detector.invalid/detect",
+                "remote",
+                {"text": text},
+            )
+        if accounting == "model" or self.capability.model_download_possible:
+            context.record_model_access(
+                self.capability.identifier,
+                cached=not self.capability.model_download_possible,
+                download_allowed=self._config.allow_model_download,
+            )
         request = {
             "protocol_version": COMMAND_DETECTOR_PROTOCOL_VERSION,
             "action": "detect",
@@ -692,7 +587,7 @@ class CommandDetector:
             mismatch_fields.append("configuration_sha256")
         if direction != self._contract.score_direction:
             mismatch_fields.append("score_direction")
-        if not math.isclose(threshold, self._contract.threshold, rel_tol=1e-12, abs_tol=1e-12):
+        if threshold != self._contract.threshold:
             mismatch_fields.append("threshold")
         details: dict[str, Any] = {
             "protocol_version": cast(str, response_version),
@@ -730,9 +625,9 @@ class CommandDetector:
         if status in ("detected", "not_detected"):
             assert score is not None
             positive = (
-                score >= threshold
+                score >= self._contract.threshold
                 if self._contract.score_direction == "higher"
-                else score <= threshold
+                else score <= self._contract.threshold
             )
             if (status == "detected") != positive:
                 raise CommandDetectorContractError(
@@ -773,7 +668,7 @@ class CommandDetectorFactory:
         _validate_limits(self.timeout_seconds, self.max_stdout_bytes, self.max_stderr_bytes)
 
     def __repr__(self) -> str:
-        return f"CommandDetectorFactory(identifier={self.capability.identifier!r})"
+        return "<command detector factory; representation redacted>"
 
     def __call__(self, config: Optional[DewatermarkConfig] = None) -> CommandDetector:
         return CommandDetector(
@@ -933,10 +828,10 @@ def assert_command_detector_conformance(
         detector, vectors, absolute_tolerance=absolute_tolerance
     )
     if not report.passed:
-        failures = ", ".join(
-            f"{case.name}({','.join(case.mismatches)})" for case in report.cases if not case.passed
+        failed_count = sum(not case.passed for case in report.cases)
+        raise CommandDetectorConformanceError(
+            f"command detector conformance failed for {failed_count} case(s)"
         )
-        raise CommandDetectorConformanceError(f"command detector conformance failed: {failures}")
     return report
 
 

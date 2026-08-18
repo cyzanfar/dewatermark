@@ -51,8 +51,18 @@ fingerprint, tokenizer revision, or calibration record is missing.
 | EXP/ITS and other distortion-free schemes | Adapter | Use a pinned author/reference implementation |
 | SynthID-Text reference | Adapter | Supports the supplied reference keys/configuration, not private Gemini production keys |
 | Semantic schemes | Adapter | Embedding model and partition configuration are detector inputs |
-| Anthropic Claude production text | `unsupported_pending_spec` | Anthropic confirms marking for supported models launched on or after 2026-08-02 but has not released the mechanism or detector guidance |
+| Anthropic Claude production text | `unsupported` (`metadata.status=unsupported_pending_spec`) | Anthropic confirms marking for supported models launched on or after 2026-08-02 but has not released the mechanism or detector guidance |
 | Other private provider schemes | `unsupported` | Do not infer support from invisible characters or a generic rewrite |
+
+## Built-in reference fixtures versus real detectors
+
+The `reference-kgw`, `reference-unigram`, and `reference-tournament` names are
+dependency-free, word-level fixtures for integration tests. Their public keys,
+tokenizer, generated vector text, and detector live in the same package, so
+their manifests are intentionally neither calibrated nor independent. The
+tournament fixture is not SynthID Text. See
+[`REFERENCE_DETECTORS.md`](REFERENCE_DETECTORS.md) for the conformance commands,
+pinned upstream packs, and promotion requirements.
 
 ## Calibration requirements
 

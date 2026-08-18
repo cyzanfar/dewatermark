@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 import dewatermark
+import dewatermark.providers as providers
+import dewatermark.scoring as scoring
 from dewatermark import DewatermarkConfig
 from dewatermark.cli import EXIT_OK, EXIT_PROCESSING, main
 from dewatermark.providers import unregister_provider
@@ -25,15 +27,21 @@ def test_config_repr_and_serialization_redact_secrets():
     cfg = DewatermarkConfig(
         fireworks_api_key="fw-secret",
         llm_api_key="llm-secret",
+        local_lm="/private/model/tenant-secret",
+        llm_base_url="https://example.test/private-endpoint-secret",
         semantic_scorer=PrivateScorer(),
     )
     assert "fw-secret" not in repr(cfg)
     assert "llm-secret" not in repr(cfg)
     assert "semantic-scorer-secret" not in repr(cfg)
+    assert "tenant-secret" not in repr(cfg)
+    assert "private-endpoint-secret" not in repr(cfg)
     assert cfg.to_dict()["fireworks_api_key"] == "***"
     assert cfg.to_dict()["llm_api_key"] == "***"
     assert "fw-secret" not in str(cfg.to_dict(redact_secrets=False))
     assert "llm-secret" not in str(cfg.to_dict(redact_secrets=False))
+    assert "tenant-secret" not in str(cfg.to_dict(redact_secrets=False))
+    assert "private-endpoint-secret" not in str(cfg.to_dict(redact_secrets=False))
 
 
 def test_namespaced_environment_takes_precedence(monkeypatch):
@@ -110,6 +118,45 @@ def test_capabilities_and_plan_are_machine_readable():
     ):
         expected = json.loads((Path(__file__).parents[1] / "schemas" / filename).read_text())
         assert dewatermark.public_schema(kind) == expected
+
+
+def test_capability_discovery_and_planning_do_not_probe_model_storage(monkeypatch):
+    def forbidden(_model):
+        raise AssertionError("discovery probed model storage")
+
+    monkeypatch.setattr(scoring, "model_cached", forbidden)
+    private_model = "private/model/path/with-credential"
+    cfg = replace(OFFLINE, local_lm=private_model)
+    capabilities = dewatermark.capabilities(cfg)
+    planned = dewatermark.plan("auto", cfg).to_dict()
+
+    assert capabilities["dependency_probe"] == "loaded_modules_only"
+    assert capabilities["local_model_cache_probe"] == "in_process_only"
+    assert private_model not in json.dumps(capabilities)
+    assert planned["available"] is False
+
+
+def test_capability_discovery_and_planning_do_not_register_builtins(monkeypatch):
+    monkeypatch.setattr(providers, "_detectors", {})
+    monkeypatch.setattr(providers, "_detector_manifests", {})
+    monkeypatch.setattr(providers, "_detector_identities", {})
+    monkeypatch.setattr(providers, "_detector_revisions", {})
+    monkeypatch.setattr(providers, "_detector_entry_points", {})
+    monkeypatch.setattr(providers, "_provider_entry_points", {})
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("capability discovery mutated the detector registry")
+
+    monkeypatch.setattr(providers, "register_detector", forbidden)
+    capabilities = dewatermark.capabilities(OFFLINE)
+    planned = dewatermark.create_plan(
+        "plain source", mode="sanitize", detector="unicode", config=OFFLINE
+    )
+
+    assert any(
+        item["registered_name"] == "unicode" for item in capabilities["detector_capabilities"]
+    )
+    assert planned["execution"]["available"] is True
 
 
 def test_plan_describes_remote_paraphrase_without_loading_models():
@@ -213,3 +260,42 @@ def test_cli_jsonl(monkeypatch, capsys):
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert rows[0]["cleaned_text"] == "ab"
     assert rows[1]["status"] == "failed"
+
+
+def test_cli_jsonl_invalid_item_does_not_abort_later_rows(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.stdin",
+        StringIO('{"text":"a\\u200bb"}\n{"text":123}\n{"text":"c\\u200bd"}\n'),
+    )
+
+    assert main(["remove", "--mode", "sanitize", "--format", "jsonl"]) == EXIT_PROCESSING
+    rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [row["line"] for row in rows] == [1, 2, 3]
+    assert rows[0]["cleaned_text"] == "ab"
+    assert rows[1] == {
+        "schema_version": "1.0",
+        "line": 2,
+        "status": "failed",
+        "error": "line is not valid JSON with a text field",
+    }
+    assert rows[2]["cleaned_text"] == "cd"
+
+
+def test_cli_jsonl_redacts_per_item_processing_exceptions(monkeypatch, capsys):
+    secret = "private-source bearer-secret /private/model"
+
+    def process(source, _args, _config):
+        if source == "bad":
+            raise RuntimeError(secret)
+        return {"cleaned_text": source, "report": {"status": "success"}}
+
+    monkeypatch.setattr("dewatermark.cli._remove_one", process)
+    monkeypatch.setattr("sys.stdin", StringIO('{"text":"ok"}\n{"text":"bad"}\n{"text":"later"}\n'))
+
+    assert main(["remove", "--mode", "sanitize", "--format", "jsonl"]) == EXIT_PROCESSING
+    output = capsys.readouterr().out
+    rows = [json.loads(line) for line in output.splitlines()]
+    assert [row["line"] for row in rows] == [1, 2, 3]
+    assert rows[1]["error"] == "line processing failed; details redacted"
+    assert rows[2]["cleaned_text"] == "later"
+    assert secret not in output

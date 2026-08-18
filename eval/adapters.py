@@ -16,13 +16,16 @@ import os
 import re
 import shlex
 import shutil
-import signal
-import subprocess
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Event, Thread
 from typing import Any, Optional
+
+from dewatermark.bounded_process import BoundedProcessFailure, run_bounded_process
+
+try:
+    from .public_codes import REPRODUCIBILITY_BLOCKER_CODES
+except ImportError:  # direct-script compatibility
+    from public_codes import REPRODUCIBILITY_BLOCKER_CODES  # type: ignore
 
 PROTOCOL_VERSION = "1.0"
 SIDECAR_SCHEMA_VERSION = "1.0"
@@ -84,68 +87,6 @@ class AdapterContractError(RuntimeError):
     """External adapter violated the JSON protocol."""
 
 
-@dataclass
-class _StreamCapture:
-    limit: int
-    retain: bool
-    data: bytearray = field(default_factory=bytearray)
-    count: int = 0
-    overflow: bool = False
-
-
-def _terminate_process(process: subprocess.Popen[bytes]) -> None:
-    """Terminate the adapter and its process group without surfacing details."""
-    if process.poll() is not None:
-        return
-    try:
-        if os.name == "nt":
-            process.kill()
-        else:
-            os.killpg(process.pid, signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        try:
-            process.kill()
-        except OSError:
-            pass
-
-
-def _read_bounded(
-    stream: Any,
-    capture: _StreamCapture,
-    overflow_event: Event,
-    process: subprocess.Popen[bytes],
-) -> None:
-    try:
-        while True:
-            chunk = stream.read(8192)
-            if not chunk:
-                return
-            capture.count += len(chunk)
-            remaining = max(0, capture.limit - len(capture.data))
-            if capture.retain and remaining:
-                capture.data.extend(chunk[:remaining])
-            if capture.count > capture.limit:
-                capture.overflow = True
-                overflow_event.set()
-                _terminate_process(process)
-                return
-    except (OSError, ValueError):
-        return
-
-
-def _write_request(stream: Any, payload: bytes) -> None:
-    try:
-        stream.write(payload)
-        stream.flush()
-    except (BrokenPipeError, OSError, ValueError):
-        pass
-    finally:
-        try:
-            stream.close()
-        except (OSError, ValueError):
-            pass
-
-
 def _run_bounded_command(
     command: tuple[str, ...],
     payload: bytes,
@@ -155,94 +96,39 @@ def _run_bounded_command(
     max_stderr_bytes: int,
     adapter_name: str,
 ) -> bytes:
-    """Run argv with streaming output caps and one wall-clock deadline."""
-    popen_options: dict[str, Any] = {
-        "stdin": subprocess.PIPE,
-        "stdout": subprocess.PIPE,
-        "stderr": subprocess.PIPE,
-        "shell": False,
-        "env": _scrubbed_environment(),
-        "close_fds": True,
-    }
-    if os.name == "nt":
-        popen_options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
-        popen_options["start_new_session"] = True
+    """Run argv through the shared process-tree and output boundary."""
     try:
-        process: subprocess.Popen[bytes] = subprocess.Popen(command, **popen_options)
-    except OSError:
-        raise RuntimeError(f"adapter {adapter_name} could not be launched") from None
-    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
-    overflow_event = Event()
-    stdout = _StreamCapture(max_stdout_bytes, retain=True)
-    stderr = _StreamCapture(max_stderr_bytes, retain=False)
-    readers = (
-        Thread(
-            target=_read_bounded,
-            args=(process.stdout, stdout, overflow_event, process),
-            daemon=True,
-        ),
-        Thread(
-            target=_read_bounded,
-            args=(process.stderr, stderr, overflow_event, process),
-            daemon=True,
-        ),
-    )
-    writer = Thread(target=_write_request, args=(process.stdin, payload), daemon=True)
-    for thread in readers:
-        thread.start()
-    writer.start()
-    deadline = time.monotonic() + timeout_seconds
-    timed_out = False
-    try:
-        while process.poll() is None:
-            if overflow_event.is_set():
-                _terminate_process(process)
-                break
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
-                _terminate_process(process)
-                break
-            time.sleep(min(0.01, remaining))
-        try:
-            process.wait(timeout=1.0)
-        except subprocess.TimeoutExpired:
-            _terminate_process(process)
-            try:
-                process.wait(timeout=1.0)
-            except subprocess.TimeoutExpired:
-                raise RuntimeError(f"adapter {adapter_name} could not be terminated") from None
-    finally:
-        writer.join(timeout=1.0)
-        for thread in readers:
-            thread.join(timeout=1.0)
-        for stream in (process.stdout, process.stderr):
-            try:
-                stream.close()
-            except (OSError, ValueError):
-                pass
-        for thread in readers:
-            thread.join(timeout=0.1)
-    if timed_out:
-        raise RuntimeError(
-            f"adapter {adapter_name} timed out; process output was redacted"
-        ) from None
-    if stdout.overflow or stderr.overflow:
-        raise AdapterContractError(
-            f"adapter {adapter_name} exceeded its output limit; process output was redacted"
-        ) from None
-    if process.returncode:
-        raise RuntimeError(
-            f"adapter {adapter_name} exited with status {process.returncode}; "
-            "process output was redacted"
-        ) from None
-    return bytes(stdout.data)
+        result = run_bounded_process(
+            command,
+            payload,
+            timeout_seconds=timeout_seconds,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+            environment=_scrubbed_environment(),
+        )
+    except BoundedProcessFailure as exc:
+        if exc.kind == "launch_failed":
+            message = f"adapter {adapter_name} could not be launched"
+        elif exc.kind == "timed_out":
+            message = f"adapter {adapter_name} timed out; process output was redacted"
+        elif exc.kind == "output_limit":
+            raise AdapterContractError(
+                f"adapter {adapter_name} exceeded its output limit; process output was redacted"
+            ) from None
+        elif exc.kind == "nonzero_exit":
+            message = (
+                f"adapter {adapter_name} exited with status {exc.returncode}; "
+                "process output was redacted"
+            )
+        else:
+            message = f"adapter {adapter_name} process cleanup failed"
+        raise RuntimeError(message) from None
+    return result.stdout
 
 
 def _public_mapping(value: Any) -> Any:
     """Remove credential-like fields before persisting adapter metadata."""
-    if isinstance(value, dict):
+    if type(value) is dict:
 
         def safe_key(key: object) -> bool:
             normalized = str(key).lower().replace("-", "_")
@@ -269,13 +155,15 @@ def _public_mapping(value: Any) -> Any:
             )
 
         return {
-            str(key): _public_mapping(item) for key, item in sorted(value.items()) if safe_key(key)
+            key: _public_mapping(value[key])
+            for key in sorted(item_key for item_key in value if type(item_key) is str)
+            if safe_key(key)
         }
-    if isinstance(value, (list, tuple)):
+    if type(value) in (list, tuple):
         return [_public_mapping(item) for item in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if type(value) in (str, int, float, bool) or value is None:
         return value
-    return f"<{type(value).__name__}>"
+    return "<redacted>"
 
 
 def _digest(value: Any) -> str:
@@ -348,7 +236,10 @@ def _load_sidecar(path: Path) -> tuple[dict[str, Any], str]:
     try:
         if path.stat().st_size > MAX_SIDECAR_BYTES:
             raise AdapterContractError("adapter sidecar exceeds the size limit")
-        raw = path.read_bytes()
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_SIDECAR_BYTES + 1)
+        if len(raw) > MAX_SIDECAR_BYTES:
+            raise AdapterContractError("adapter sidecar exceeds the size limit")
         value = json.loads(raw)
     except AdapterContractError:
         raise
@@ -383,9 +274,7 @@ class CommandScheme:
             self.sidecar_path = _discover_sidecar(self.command)
 
     def __repr__(self) -> str:
-        return (
-            f"CommandScheme(name={self.name!r}, family={self.family!r}, timeout={self.timeout!r})"
-        )
+        return "<evaluation command adapter; representation redacted>"
 
     @classmethod
     def from_spec(cls, spec: str) -> "CommandScheme":
@@ -493,7 +382,7 @@ class CommandScheme:
             "golden_conformance": {"passed": False},
             "network_required": None,
             "model_download_required": None,
-            "reproducibility_blockers": ["no static adapter sidecar was found"],
+            "reproducibility_blockers": ["no_static_adapter_sidecar"],
         }
 
     def static_manifest(self) -> dict[str, Any]:
@@ -521,34 +410,35 @@ class CommandScheme:
         golden = supplied.get("golden_conformance")
         blockers: list[str] = []
         if supplied.get("independent") is not True:
-            blockers.append("sidecar does not request independent classification")
+            blockers.append("independent_classification_not_requested")
         if supplied.get("family") != self.family:
-            blockers.append("sidecar family does not match the adapter registration")
+            blockers.append("family_mismatch")
         if supplied.get("source") != self.source:
-            blockers.append("sidecar source does not match the adapter registration")
+            blockers.append("source_mismatch")
         required_text = ("id", "implementation", "implementation_version")
         for key in required_text:
             if not _is_revision(supplied.get(key)):
-                blockers.append(f"{key} is unresolved")
+                blockers.append(f"{key}_unresolved")
         if minimum < 1:
-            blockers.append("minimum_effective_tokens is not positive")
+            blockers.append("minimum_effective_tokens_not_positive")
         configuration_sha256 = supplied.get("configuration_sha256")
         if not isinstance(configuration_sha256, str) or not _SHA256.fullmatch(configuration_sha256):
-            blockers.append("configuration_sha256 is missing or invalid")
+            blockers.append("configuration_sha256_invalid")
         for key in ("model_revision", "tokenizer_revision"):
             if not _is_revision(supplied.get(key)):
-                blockers.append(f"{key} is unresolved")
+                blockers.append(f"{key}_unresolved")
         if not isinstance(golden, dict) or golden.get("passed") is not True:
-            blockers.append("golden conformance has not passed")
+            blockers.append("golden_conformance_not_passed")
         else:
             for key in ("vectors_sha256", "report_sha256"):
                 value = golden.get(key)
                 if not isinstance(value, str) or not _SHA256.fullmatch(value):
-                    blockers.append(f"golden_conformance.{key} is missing or invalid")
+                    blockers.append(f"golden_{key}_invalid")
         if not isinstance(supplied.get("network_required"), bool):
-            blockers.append("network_required is unresolved")
+            blockers.append("network_required_unresolved")
         if not isinstance(supplied.get("model_download_required"), bool):
-            blockers.append("model_download_required is unresolved")
+            blockers.append("model_download_required_unresolved")
+        assert set(blockers) <= REPRODUCIBILITY_BLOCKER_CODES
         manifest = {
             **supplied,
             "minimum_effective_tokens": minimum,
@@ -593,9 +483,9 @@ class CommandScheme:
         executable = self.executable_digests()
         blockers = list(manifest.get("reproducibility_blockers", []))
         if not executable:
-            blockers.append("adapter executable/script digest is unresolved")
+            blockers.append("adapter_executable_digest_unresolved")
         if not manifest.get("sidecar_sha256"):
-            blockers.append("adapter sidecar digest is unresolved")
+            blockers.append("adapter_sidecar_digest_unresolved")
         command_identity = {
             "argument_count": len(self.command),
             "option_names": sorted(

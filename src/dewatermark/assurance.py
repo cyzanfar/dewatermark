@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .config import DewatermarkConfig, resolve
-from .detectors import capability_of, run_detector
+from .detectors import UnicodeArtifactDetector, capability_of, run_detector
 from .exceptions import ConfigurationError
 from .extension_safety import (
     enforce_consent,
@@ -15,6 +15,12 @@ from .extension_safety import (
 )
 from .models import DetectionEvidence, RemovalMode, VerificationEvidence, VerificationStatus
 from .providers import detector_manifest, get_detector
+from .request_context import (
+    RequestContext,
+    begin_extension_usage,
+    current_request_context,
+    request_scope,
+)
 
 
 def resolve_detector(
@@ -26,18 +32,35 @@ def resolve_detector(
         return None, None
     if not isinstance(selected, str):
         capability = static_capability(selected, "detector")
+        if (
+            capability.identifier == "unicode-artifacts-v1"
+            and type(selected) is not UnicodeArtifactDetector
+        ):
+            raise ConfigurationError(
+                "the canonical Unicode detector identifier is reserved for the built-in detector"
+            )
         return selected, capability.identifier
     declared = detector_manifest(selected)
     if declared is None:
-        raise ConfigurationError(
-            f"detector {selected!r} must be explicitly loaded with a static manifest"
-        )
+        raise ConfigurationError("detector must be explicitly loaded with a static manifest")
     enforce_consent(declared, config)
+    begin_extension_usage(declared)
     factory = get_detector(selected)
+    if declared.identifier == "unicode-artifacts-v1" and factory is not UnicodeArtifactDetector:
+        raise ConfigurationError(
+            "the canonical Unicode detector identifier is reserved for the built-in detector"
+        )
     instance = factory(safe_extension_config(config))
     actual = static_capability(instance, "detector")
     if not manifests_match(declared, actual):
         raise ConfigurationError("detector factory and instance capability manifests differ")
+    if (
+        actual.identifier == "unicode-artifacts-v1"
+        and type(instance) is not UnicodeArtifactDetector
+    ):
+        raise ConfigurationError(
+            "the canonical Unicode detector identifier is reserved for the built-in detector"
+        )
     return instance, actual.identifier
 
 
@@ -51,9 +74,16 @@ def inspect(
     if not isinstance(text, str) or not text:
         raise ValueError("'text' must be a non-empty string.")
     cfg = resolve(config)
-    instance, name = resolve_detector(detector, cfg)
-    assert instance is not None and name is not None
-    return run_detector(instance, text, fallback_name=name, config=cfg)
+
+    def execute() -> DetectionEvidence:
+        instance, name = resolve_detector(detector, cfg)
+        assert instance is not None and name is not None
+        return run_detector(instance, text, fallback_name=name, config=cfg)
+
+    if current_request_context() is not None:
+        return execute()
+    with request_scope(RequestContext.from_config(cfg)):
+        return execute()
 
 
 def verify(
@@ -63,15 +93,22 @@ def verify(
     *,
     config: Optional[DewatermarkConfig] = None,
 ) -> VerificationEvidence:
-    """Verify a transformation against a calibrated, independent detector."""
+    """Verify a transformation against a named compatible detector."""
     if not source or not candidate:
         raise ValueError("source and candidate must be non-empty strings")
     cfg = resolve(config)
-    instance, name = resolve_detector(detector, cfg)
-    assert instance is not None and name is not None
-    before = run_detector(instance, source, fallback_name=name, config=cfg)
-    after = run_detector(instance, candidate, fallback_name=name, config=cfg)
-    return evaluate_verification(before, after, instance, detector_name=name)
+
+    def execute() -> VerificationEvidence:
+        instance, name = resolve_detector(detector, cfg)
+        assert instance is not None and name is not None
+        before = run_detector(instance, source, fallback_name=name, config=cfg)
+        after = run_detector(instance, candidate, fallback_name=name, config=cfg)
+        return evaluate_verification(before, after, instance, detector_name=name)
+
+    if current_request_context() is not None:
+        return execute()
+    with request_scope(RequestContext.from_config(cfg)):
+        return execute()
 
 
 def evaluate_verification(
@@ -84,13 +121,30 @@ def evaluate_verification(
     """Conclude only what paired evidence from a declared detector supports."""
     capability = capability_of(detector, detector_name or before.detector)
     name = detector_name or capability.identifier
+    reserved_unicode_collision = (
+        capability.identifier == "unicode-artifacts-v1"
+        and type(detector) is not UnicodeArtifactDetector
+    )
+    deterministic_unicode_policy = (
+        type(detector) is UnicodeArtifactDetector
+        and capability.calibrated
+        and capability.identifier == "unicode-artifacts-v1"
+        and "unicode-artifacts" in capability.schemes
+        and capability.metadata.get("verification_basis") == "literal_codepoint_policy"
+    )
     if before.status == "detected" and after.status == "not_detected":
-        if capability.calibrated and capability.independent:
+        if deterministic_unicode_policy or (
+            capability.calibrated and capability.independent and not reserved_unicode_collision
+        ):
             status: VerificationStatus = "verified_cleared"
             reason = None
         else:
             status = "not_verifiable"
-            reason = "detector is not declared calibrated and independent"
+            reason = (
+                "the canonical Unicode detector identifier is reserved for the built-in detector"
+                if reserved_unicode_collision
+                else "detector is not declared calibrated and independent"
+            )
     elif after.status == "detected":
         status = "residual"
         reason = "the named detector still reports evidence"
@@ -99,10 +153,7 @@ def evaluate_verification(
         reason = "the named detector failed"
     else:
         status = "not_verifiable"
-        reason = (
-            "verification requires positive evidence before and no evidence after "
-            "from a calibrated independent detector"
-        )
+        reason = "verification requires compatible positive evidence before and none after"
     return VerificationEvidence(
         status=status,
         detector=name,

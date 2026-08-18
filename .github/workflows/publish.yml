@@ -7,14 +7,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
-  build:
-    name: Build release distributions
+  preflight:
+    name: Verify release identity
+    if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -22,27 +23,158 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - name: Verify release tag matches package version
+      - name: Verify every release surface has the tag version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          PACKAGE_VERSION="$(python -c 'exec(open("src/dewatermark/_version.py").read()); print(__version__)')"
-          test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          namespace = {}
+          exec(Path("src/dewatermark/_version.py").read_text(encoding="utf-8"), namespace)
+          version = namespace["__version__"]
+          assert re.fullmatch(
+              r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version
+          ), "stable publishing refuses prerelease or non-SemVer versions"
+          assert os.environ["RELEASE_TAG"] == f"v{version}"
+          assert json.loads(Path("web/package.json").read_text(encoding="utf-8"))["version"] == version
+          citation = Path("CITATION.cff").read_text(encoding="utf-8")
+          assert re.search(rf"^version: {re.escape(version)}$", citation, re.MULTILINE)
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          assert re.search(
+              rf"^## \[{re.escape(version)}\] - [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$",
+              changelog,
+              re.MULTILINE,
+          ), "stable publishing requires a dated changelog release heading"
+          PY
+
+  container:
+    name: Publish signed container
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Required to push the release image to GHCR.
+      id-token: write # Required to create artifact attestations.
+      attestations: write # Required to store provenance and SBOM attestations.
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build local smoke-test image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          tags: dewatermark:release-smoke
+      - name: Test authenticated health endpoint and non-root runtime
+        shell: bash
+        run: |
+          test "$(docker image inspect --format '{{.Config.User}}' dewatermark:release-smoke)" = dewatermark
+          container_id=$(docker run --rm -d \
+            -e DEWATERMARK_SERVER_API_KEY=release-smoke-secret \
+            -p 127.0.0.1:8765:8765 \
+            dewatermark:release-smoke serve --host 0.0.0.0 --port 8765)
+          trap 'docker stop "$container_id" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent \
+              -H 'Authorization: Bearer release-smoke-secret' \
+              http://127.0.0.1:8765/health > health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python -c 'import json; assert json.load(open("health.json")) == {"status": "ok"}'
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            http://127.0.0.1:8765/health)" = 401
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: metadata
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+            type=sha
+      - id: push
+        name: Build and publish multi-platform image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest container provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Generate container SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: container.spdx.json
+          upload-artifact: false
+      - name: Attest container SBOM
+        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: container.spdx.json
+          push-to-registry: true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: container-sbom
+          path: container.spdx.json
+          if-no-files-found: error
+          retention-days: 90
+
+  build:
+    name: Build release distributions
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
       - name: Build and validate distributions
         run: |
-          python -m pip install --upgrade build pytest twine
+          python -m pip install build==1.5.0 pytest==9.1.1 twine==7.0.0
           python -m build
           python -m twine check dist/*
+          mkdir dist-from-sdist
+          python -m pip wheel --no-deps --wheel-dir dist-from-sdist dist/*.tar.gz
       - name: Validate distribution contents
         env:
           DEWATERMARK_DIST_DIR: dist
         run: python -m pytest tests/test_distribution_artifacts.py
       - name: Smoke-test installed wheel
         run: |
-          python -m pip install --force-reinstall dist/*.whl
+          python -m pip install --force-reinstall dist-from-sdist/*.whl
           python -m pip check
           python -I -c "import dewatermark, dewatermark_eval; from importlib.resources import files; assert files('dewatermark').joinpath('skills/remove-text-watermarks/SKILL.md').is_file()"
           dewatermark capabilities
+          dewatermark-evidence --help
       - name: Prepare SBOM output
         run: mkdir -p attestations
       - name: Generate distribution SBOM
@@ -52,15 +184,6 @@ jobs:
           format: spdx-json
           output-file: attestations/dewatermark.spdx.json
           upload-artifact: false
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
-        with:
-          subject-path: dist/*
-      - name: Attest SBOM
-        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
-        with:
-          subject-path: dist/*
-          sbom-path: attestations/dewatermark.spdx.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: python-distributions
@@ -74,18 +197,73 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  attest:
+    name: Attest validated distributions
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # Required to download validated build artifacts.
+      attestations: write # Required to store distribution attestations.
+      contents: read
+      id-token: write # Required to sign build provenance and the SBOM.
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-distributions
+          path: dist/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-sbom
+          path: attestations/
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/*
+      - name: Attest SBOM
+        uses: actions/attest-sbom@51e74621a501c89df81fc1391c5a8f4cfc9fab2f # v3
+        with:
+          subject-path: dist/*
+          sbom-path: attestations/dewatermark.spdx.json
+
+  verify:
+    name: Required release checks
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: python -m pip install -e ".[dev,agents]"
+      - run: python -m pytest
+      - run: ruff check src tests eval adapters scripts examples
+      - run: ruff format --check src tests eval adapters scripts examples
+      - run: mypy src/dewatermark
+      - run: python scripts/export_openapi.py --check
+      - run: dewatermark detectors doctor
+      - run: dewatermark detectors conformance
+      - name: Verify browser package
+        working-directory: web
+        run: npm run check
+
   publish:
     name: Publish distributions to PyPI
-    needs: build
+    needs: attest
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/dewatermark
     permissions:
-      actions: read
-      attestations: read
+      actions: read # Required to download the attested distributions.
+      attestations: read # Required to verify GitHub attestations before upload.
       contents: read
-      id-token: write
+      id-token: write # Required for PyPI trusted publishing.
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -94,8 +272,15 @@ jobs:
       - name: Verify GitHub build attestation
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          gh attestation verify dist/*.whl --repo "$GITHUB_REPOSITORY"
-          gh attestation verify dist/*.tar.gz --repo "$GITHUB_REPOSITORY"
+          gh attestation verify dist/*.whl \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish.yml" \
+            --source-ref "refs/tags/$RELEASE_TAG"
+          gh attestation verify dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/publish.yml" \
+            --source-ref "refs/tags/$RELEASE_TAG"
       - name: Publish with PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

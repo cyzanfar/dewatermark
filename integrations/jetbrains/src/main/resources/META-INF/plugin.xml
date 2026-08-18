@@ -1,0 +1,19 @@
+<idea-plugin>
+    <id>com.cyzanfar.dewatermark</id>
+    <name>Dewatermark Unicode Inspector</name>
+    <vendor url="https://github.com/cyzanfar/text-watermark-remover">Cyrus Anfar</vendor>
+    <description><![CDATA[
+      Local-only suspicious Unicode inspection with an explicit safe cleanup.
+      The plugin invokes the dewatermark CLI without a shell and never opens a network connection.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <localInspection
+                shortName="DewatermarkUnicode"
+                displayName="Suspicious Unicode artifact"
+                groupName="Security"
+                enabledByDefault="true"
+                level="WARNING"
+                implementationClass="com.cyzanfar.dewatermark.DewatermarkUnicodeInspection"/>
+    </extensions>
+</idea-plugin>

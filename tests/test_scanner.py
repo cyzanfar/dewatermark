@@ -1,12 +1,20 @@
 import os
 from pathlib import Path
 
+import dewatermark.scanner_config as scanner_config_module
 from dewatermark.scanner import (
     baseline_fingerprints,
     changed_lines_from_unified_diff,
+    path_is_selected,
     scan_paths,
     scan_text,
     to_sarif,
+)
+from dewatermark.scanner_config import (
+    ScannerConfig,
+    find_scanner_config,
+    load_scanner_config,
+    resolve_scanner_config,
 )
 
 
@@ -42,6 +50,22 @@ def test_contextual_typography_requires_explicit_opt_in():
     assert finding.disposition == "contextual"
 
 
+def test_scanner_rejects_fail_open_direct_api_policies():
+    try:
+        scan_paths([], max_file_bytes=-1)
+    except ValueError as exc:
+        assert "max_file_bytes" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("negative size limit must fail closed")
+
+    try:
+        scan_text("plain", dispositions={"unsupported"})
+    except ValueError as exc:
+        assert "dispositions" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("unknown dispositions must fail closed")
+
+
 def test_baseline_suppression_and_changed_line_filters():
     source = "old\u200b\nnew\u200b\n"
     initial = scan_paths([])
@@ -75,3 +99,120 @@ def test_safe_fix_is_atomic_and_preserves_bom_crlf_and_mode(tmp_path: Path):
     assert len(report.edits) == 1
     assert report.edits[0].original_codepoints == ("U+200B",)
     assert report.edits[0].accepted is True
+
+
+def test_scan_paths_supports_extensions_and_relative_exclude_globs(tmp_path: Path):
+    (tmp_path / "keep.txt").write_text("he\u200bllo", encoding="utf-8")
+    (tmp_path / "skip.txt").write_text("he\u200bllo", encoding="utf-8")
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "data.txt").write_text("he\u200bllo", encoding="utf-8")
+    (tmp_path / "notes.custom").write_text("he\u200bllo", encoding="utf-8")
+
+    report = scan_paths(
+        [tmp_path],
+        exclude_patterns=("skip.txt", "generated\\**"),
+        extensions=("custom",),
+    )
+    assert report.files_scanned == 1
+    assert [Path(item.path).name for item in report.findings] == ["notes.custom"]
+    assert report.to_dict()["configuration"]["exclude_patterns"] == [
+        "generated/**",
+        "skip.txt",
+    ]
+    assert report.to_dict()["configuration"]["extensions"] == [".custom"]
+
+
+def test_in_memory_path_selection_is_anchored_to_policy_root(tmp_path: Path):
+    nested = tmp_path / "src" / "generated" / "sample.py"
+    assert not path_is_selected(
+        nested,
+        root=tmp_path,
+        exclude_patterns=("src/generated/**",),
+        extensions=("py",),
+    )
+    assert path_is_selected(
+        tmp_path / "src" / "keep.py",
+        root=tmp_path,
+        exclude_patterns=("src/generated/**",),
+        extensions=("py",),
+    )
+
+
+def test_scanner_config_load_discovery_and_defaults(tmp_path: Path):
+    config_path = tmp_path / ".dewatermark.toml"
+    config_path.write_text(
+        """[scan]
+exclude = ["generated/**", "*.min.js"]
+extensions = ["txt", ".md"]
+max_file_bytes = 4096
+dispositions = ["actionable", "contextual"]
+suppressions = ["U+FEFF"]
+""",
+        encoding="utf-8",
+    )
+    nested = tmp_path / "src" / "nested"
+    nested.mkdir(parents=True)
+    assert find_scanner_config(nested) == config_path
+    config = resolve_scanner_config(start=nested)
+    assert config == ScannerConfig(
+        exclude=("generated/**", "*.min.js"),
+        extensions=(".txt", ".md"),
+        max_file_bytes=4096,
+        dispositions=("actionable", "contextual"),
+        suppressions=("U+FEFF",),
+        source=str(config_path),
+    )
+
+
+def test_scanner_config_reads_pyproject_and_rejects_unknown_keys(tmp_path: Path):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """[project]
+name = "demo"
+[tool.dewatermark.scan]
+exclude = ["vendor/**"]
+""",
+        encoding="utf-8",
+    )
+    assert load_scanner_config(pyproject).exclude == ("vendor/**",)
+    bad = tmp_path / "bad.toml"
+    bad.write_text("[scan]\nsecret = 'nope'\n", encoding="utf-8")
+    try:
+        load_scanner_config(bad)
+    except ValueError as exc:
+        assert "unsupported keys" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("unknown scanner config keys must fail closed")
+
+
+def test_scanner_config_can_disable_discovery(tmp_path: Path):
+    (tmp_path / ".dewatermark.toml").write_text(
+        "[scan]\nexclude = ['private/**']\n", encoding="utf-8"
+    )
+    assert resolve_scanner_config(start=tmp_path, discover=False) == ScannerConfig()
+
+
+def test_scanner_config_rejects_symlinked_policy(tmp_path: Path):
+    target = tmp_path / "target.toml"
+    target.write_text("[scan]\nexclude = []\n", encoding="utf-8")
+    link = tmp_path / ".dewatermark.toml"
+    try:
+        link.symlink_to(target)
+    except (NotImplementedError, OSError):
+        return
+
+    try:
+        load_scanner_config(link)
+    except ValueError as exc:
+        assert "regular file" in str(exc)
+    else:  # pragma: no cover - assertion clarity
+        raise AssertionError("symlinked policy must fail closed")
+
+
+def test_scanner_config_discovery_bounds_pyproject_reads(tmp_path: Path, monkeypatch):
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.dewatermark.scan]\nexclude = ['generated/**']\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(scanner_config_module, "MAX_CONFIG_BYTES", 8)
+    assert find_scanner_config(tmp_path) is None

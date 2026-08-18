@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -21,12 +21,16 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "Topic :: Security",
     "Topic :: Text Processing :: Filters",
 ]
-dependencies = ["requests>=2.31"]
+dependencies = [
+    "requests>=2.31",
+    "tomli>=2; python_version < '3.11'",
+]
 
 [project.optional-dependencies]
 local = ["torch>=2.2", "transformers>=4.44"]
@@ -47,6 +51,7 @@ agents = ["mcp>=1.27,<3; python_version >= '3.10'"]
 [project.scripts]
 dewatermark = "dewatermark.cli:main"
 dewatermark-eval = "dewatermark_eval.run_eval:main"
+dewatermark-evidence = "dewatermark_eval.evidence:main"
 dewatermark-mcp = "dewatermark.mcp_server:main"
 
 [tool.pytest.ini_options]
@@ -59,21 +64,27 @@ Homepage = "https://github.com/cyzanfar/text-watermark-remover"
 Repository = "https://github.com/cyzanfar/text-watermark-remover"
 Issues = "https://github.com/cyzanfar/text-watermark-remover/issues"
 Changelog = "https://github.com/cyzanfar/text-watermark-remover/blob/main/CHANGELOG.md"
+Documentation = "https://cyzanfar.github.io/text-watermark-remover/"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/dewatermark"]
-exclude = ["eval/.venv", "eval/**/__pycache__", "eval/RESULTS.md"]
+exclude = [
+    "eval/.venv", "eval/**/__pycache__", "eval/RESULTS.md",
+    "adapters/**/__pycache__", "adapters/**/*.pyc", "adapters/**/*.pyo",
+]
 
 [tool.hatch.build.targets.wheel.force-include]
 "eval" = "dewatermark_eval"
 "skills/remove-text-watermarks" = "dewatermark/skills/remove-text-watermarks"
 "schemas" = "dewatermark/data/schemas"
+"adapters" = "dewatermark/data/adapters"
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/dewatermark", "eval/*.py", "eval/README.md",
+    "src/dewatermark", "eval/*.py", "eval/*.json", "eval/README.md",
     "README.md", "LICENSE", "UNICODE_LICENSE.txt", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
     "CODE_OF_CONDUCT.md", "AGENTS.md", "docs", "examples", "schemas", "skills", "tests",
+    "adapters",
 ]
 
 [tool.hatch.version]

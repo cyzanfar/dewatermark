@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/command-detector-protocol-v1.json",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/command-detector-protocol-v1.json",
   "title": "Dewatermark command detector protocol v1",
   "oneOf": [
     {"$ref": "#/$defs/detectRequest"},

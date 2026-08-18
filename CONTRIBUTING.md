@@ -10,15 +10,26 @@ experiment and a universal removal claim.
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 .venv/bin/pytest
-.venv/bin/ruff check src tests eval
+.venv/bin/ruff check src tests eval adapters scripts examples
+.venv/bin/ruff format --check src tests eval adapters scripts examples
 .venv/bin/mypy src/dewatermark
 .venv/bin/python -m build
 .venv/bin/python -m twine check dist/*
+cd web && npm run check && cd ..
+python scripts/export_openapi.py --check
 ```
 
 No unit test may require network access or an uncached model. Add provider tests
 through mocks or contract fixtures. Mark expensive reproducibility runs as
 external artifacts rather than unit tests.
+
+Changes under `integrations/` must also run their native package checks:
+
+```bash
+cd integrations/vscode && npm ci && npm test && npm run package
+cd integrations/jetbrains && ./gradlew --no-daemon \
+  --dependency-verification=strict test buildPlugin verifyPlugin
+```
 
 If you change the Unicode policy, regenerate the browser table and run the
 cross-runtime golden tests:
@@ -61,6 +72,12 @@ Heavy or conflicting research stacks should use the JSON command-adapter
 boundary. Adapter errors must be redacted; never return raw stderr or provider
 response bodies in public reports.
 
+Run `dewatermark detectors doctor` for static claim checks and
+`dewatermark detectors conformance` for the bundled synthetic vectors. Passing
+those vectors establishes only adapter compatibility. A production detector
+also needs a pinned tokenizer/key/configuration, held-out calibration, adequate
+matched controls, and an independent replication record.
+
 ## Benchmark contributions
 
 Follow [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md). Calibration,
@@ -68,6 +85,27 @@ attack development, and final testing must use disjoint data. Keep failures and
 quality rejections in the denominator, include transformed nulls and false
 insertion measurements, and attach the machine-readable manifest used to
 produce every table.
+
+Run the offline evidence reference and verify its resulting bundle whenever the
+protocol, observation, metric, schema, or replay code changes. A synthetic
+reference run proves the tooling contract only; it must never be described as
+natural-language detector efficacy.
+
+```bash
+evidence_root="$(mktemp -d)"
+dewatermark-evidence reference-protocol \
+  --output-directory "$evidence_root/source"
+dewatermark-evidence verify "$evidence_root/source/evidence.json"
+dewatermark-evidence replay "$evidence_root/source/evidence.json" \
+  --workspace "$evidence_root/replay" --execute
+dewatermark-evidence verify \
+  "$evidence_root/replay/reproduced/evidence.json"
+```
+
+Public benchmark submissions must validate the sample registry, content-free
+observation set, evidence bundle, and replication schemas. Never commit raw
+prompts, source/candidate text, private paths, credentials, caches, checkpoints,
+or generated result directories.
 
 See `docs/ARCHITECTURE.md` for boundaries and `docs/EXTENSIONS.md` for provider
 contracts. Public compatibility is governed by `docs/COMPATIBILITY.md`.

@@ -8,15 +8,26 @@
 - `docs/`: architecture, extensions, compatibility, and research plan.
 - `examples/`: runnable public API examples.
 - `schemas/`: checked-in JSON contracts for tools and evidence receipts.
+- `adapters/`: pinned, isolated external-detector packs and templates.
+- `integrations/`: native editor packages and their process bridges.
+- `scripts/`: deterministic schema/client-generation maintenance tools.
+- `constraints/`: release-container dependency pins.
 - `web/`: browser implementation generated from the canonical Unicode policy.
 - `skills/`: portable AI-agent workflow package.
 
 ## Required checks
 
-Run `pytest`, `ruff check src tests eval`, `mypy src/dewatermark`, `python -m
-build`, and `twine check dist/*` for release-affecting work.
+Run `pytest`, `ruff check src tests eval adapters scripts examples`, `ruff
+format --check src tests eval adapters scripts examples`, `mypy
+src/dewatermark`, `python scripts/export_openapi.py --check`, `python -m build`,
+and `twine check dist/*` for release-affecting work.
 When Unicode policy or browser behavior changes, also run the cross-runtime Node
 tests and regenerate `web/unicode-policy.mjs` from the canonical policy.
+Changes under `integrations/` must run the relevant npm or Gradle package tests;
+changes under `web/` must run `npm run check` there.
+Changes to benchmark protocols, observations, evidence, metrics, replay, or
+their schemas must also run the offline `dewatermark-evidence
+reference-protocol` → `verify` → `replay --execute` conformance path.
 
 ## Invariants
 

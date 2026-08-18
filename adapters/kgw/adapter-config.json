@@ -1,0 +1,21 @@
+{
+  "configuration_sha256": "b773074d85f03ebd9172fb940b0bcd821e7a796575082eb5a896e5f0bd0c0dbe",
+  "delta": 2.0,
+  "gamma": 0.25,
+  "hash_key": 15485863,
+  "identifier": "reference-upstream/kgw-simple1-token-fixture-v1",
+  "ignore_repeated_bigrams": true,
+  "minimum_effective_tokens": 32,
+  "normalizers": [],
+  "rng_device": "cpu",
+  "schema_version": "1.0",
+  "scheme": "kgw/simple-1-token-fixture-v1",
+  "seeding_scheme": "simple_1",
+  "select_green_tokens": true,
+  "threshold": 4.0,
+  "torch_version": "2.4.1",
+  "upstream_file_sha256": "512c40644bc9e9932a8674bbf13046c1a4e92db429cff92afc9e90d2226896fc",
+  "upstream_repository": "https://github.com/jwkirchenbauer/lm-watermarking",
+  "upstream_revision": "82922516930c02f8aa322765defdb5863d07a00e",
+  "vocab_size": 256
+}

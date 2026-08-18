@@ -72,7 +72,11 @@ def test_injected_quality_gate_and_chunker():
             return [text[:2], text[2:]]
 
     cfg = DewatermarkConfig(quality_gate=Gate(), chunker=Chunker())
-    assert evaluate_candidate("a", "completely different", cfg).passed
+    assert evaluate_candidate("a", "b", cfg).passed
+    # External gates are additive and cannot erase deterministic failures.
+    bypass = evaluate_candidate("a", "completely different", cfg)
+    assert not bypass.passed
+    assert bypass.gate_outcomes[0].status == "abstained"
     assert split_for_config("abcd", cfg) == ["ab", "cd"]
 
 

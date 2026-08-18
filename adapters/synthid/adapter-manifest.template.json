@@ -1,0 +1,37 @@
+{
+  "adapter_protocol_version": "1.0",
+  "calibrated": false,
+  "configuration_sha256": null,
+  "description": "Pinned integration template only; not a validated detector and not Gemini production support.",
+  "golden_conformance": {
+    "passed": false,
+    "reason": "official-key/configuration-specific vectors and calibration evidence are required"
+  },
+  "identifier": "operator-required/synthid-text-reference",
+  "independent": false,
+  "model_revision": null,
+  "production_detection": false,
+  "production_keys_available": false,
+  "repository": "https://github.com/google-deepmind/synthid-text",
+  "repository_license": "Apache-2.0",
+  "repository_revision": "addb4a158143c7c6851a1308f78b89fceed59683",
+  "required_configuration": {
+    "context_history_size": null,
+    "detector_type": null,
+    "keys_fingerprint": null,
+    "ngram_len": null,
+    "sampling_table_seed_fingerprint": null,
+    "sampling_table_size": null,
+    "thresholds_by_effective_length": null,
+    "tokenizer_revision": null,
+    "watermarking_depth": null
+  },
+  "source_files_sha256": {
+    "src/synthid_text/detector_mean.py": "584f12aa376e9106e6e6d4dd8bf3d5572c04996c844ffddeff37e1a1a15680f9",
+    "src/synthid_text/hashing_function.py": "6900000b03d6275347396d495d1118c64a16537a64c05fdec0868b623d1a34ab",
+    "src/synthid_text/logits_processing.py": "88bd1c20e2fea72356980548fc4cfa82c2ca1a2059ecb2deb1e3efa38be76294"
+  },
+  "status": "template_pending_conformance",
+  "tokenizer_revision": null,
+  "vendor_equivalent": false
+}

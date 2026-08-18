@@ -1,12 +1,17 @@
 import asyncio
 
+import pytest
+
 from dewatermark.mcp_server import (
     analyze_text,
+    apply_transformation,
     create_mcp_server,
     get_capabilities,
     plan_removal,
+    plan_transformation,
     sanitize_text,
 )
+from dewatermark.server import process_request
 
 
 def test_pure_mcp_tools():
@@ -14,6 +19,27 @@ def test_pure_mcp_tools():
     assert analyze_text("plain")["unicode"]["total_flags"] == 0
     assert plan_removal("sanitize")["available"] is True
     assert "modes" in get_capabilities()
+
+
+def test_mcp_and_http_plan_defaults_are_digest_compatible():
+    text = "a\u200bb"
+    http_plan = process_request("/plan", {"text": text, "mode": "sanitize"})
+    mcp_plan = plan_transformation(text, mode="sanitize")
+
+    assert mcp_plan == http_plan
+    applied = apply_transformation(
+        text,
+        http_plan["plan_digest"],
+        mode="sanitize",
+        consent=True,
+    )
+    assert applied["plan_digest"] == http_plan["plan_digest"]
+    assert applied["result"]["cleaned_text"] == "ab"
+
+
+def test_mcp_rejects_invalid_plan_options_as_input_errors():
+    with pytest.raises(ValueError, match="planning request is invalid"):
+        plan_transformation("private source", mode="sanitize", passes=0)
 
 
 def test_official_mcp_transport_inspect_plan_apply_verify():

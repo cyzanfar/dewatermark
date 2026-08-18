@@ -1,0 +1,85 @@
+{
+  "name": "dewatermark-vscode",
+  "displayName": "Dewatermark Unicode Inspector",
+  "description": "Local-only suspicious Unicode diagnostics and explicit safe cleanup.",
+  "version": "0.1.0",
+  "publisher": "cyzanfar",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The extension starts a configured local executable and therefore requires Workspace Trust."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Scanning is limited to local file-backed documents."
+    }
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "unicode",
+    "watermark",
+    "security",
+    "steganography"
+  ],
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:dewatermark.scanDocument",
+    "onCommand:dewatermark.applySafeFix"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyzanfar/text-watermark-remover.git",
+    "directory": "integrations/vscode"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "dewatermark.scanDocument",
+        "title": "Dewatermark: Scan Current Document"
+      },
+      {
+        "command": "dewatermark.applySafeFix",
+        "title": "Dewatermark: Apply Safe Unicode Cleanup"
+      }
+    ],
+    "configuration": {
+      "title": "Dewatermark",
+      "properties": {
+        "dewatermark.executable": {
+          "type": "string",
+          "default": "dewatermark",
+          "scope": "machine",
+          "description": "Local dewatermark CLI executable. It is invoked without a shell."
+        },
+        "dewatermark.scanOnChange": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan local file buffers after edits. Text never leaves the machine."
+        },
+        "dewatermark.includeContextual": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also show contextual and informational Unicode observations."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.9.2"
+  }
+}

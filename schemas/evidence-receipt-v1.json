@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/cyzanfar/text-watermark-remover/schemas/evidence-receipt-v1.json",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/evidence-receipt-v1.json",
   "title": "DewatermarkEvidenceReceipt",
   "type": "object",
   "required": [
@@ -54,7 +54,16 @@
     "detector": {"type": ["string", "null"]},
     "detector_before": {"$ref": "#/$defs/detectionEvidence"},
     "detector_after": {"$ref": "#/$defs/detectionEvidence"},
-    "quality": {"type": "object"},
+    "quality": {
+      "type": "object",
+      "properties": {
+        "gate_outcomes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/qualityGateOutcome"}
+        }
+      },
+      "additionalProperties": true
+    },
     "resources": {"type": "object"},
     "provenance": {
       "type": "object",
@@ -84,6 +93,58 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "qualityGateOutcome": {
+      "type": "object",
+      "required": [
+        "identifier",
+        "gate_type",
+        "status",
+        "required",
+        "score_direction",
+        "checked_items"
+      ],
+      "properties": {
+        "identifier": {"type": "string"},
+        "gate_type": {
+          "enum": [
+            "semantic_similarity",
+            "bidirectional_nli",
+            "atomic_claim_qa",
+            "entity_linking",
+            "citation_grounding",
+            "task_contract",
+            "external"
+          ]
+        },
+        "status": {"enum": ["passed", "failed", "abstained", "error"]},
+        "required": {"type": "boolean"},
+        "score": {"type": "number"},
+        "source_entails_candidate": {"type": "number", "minimum": 0, "maximum": 1},
+        "candidate_entails_source": {"type": "number", "minimum": 0, "maximum": 1},
+        "threshold": {"type": "number"},
+        "score_direction": {"enum": ["higher", "lower"]},
+        "checked_items": {"type": "integer", "minimum": 0},
+        "reason_code": {
+          "enum": [
+            "threshold_met",
+            "threshold_not_met",
+            "adapter_unavailable",
+            "adapter_error",
+            "invalid_adapter_result",
+            "no_items_checked",
+            "request_context_required",
+            "remote_usage_not_accounted",
+            "model_usage_not_accounted",
+            "extension_rejected",
+            "gate_passed",
+            "gate_failed",
+            "prerequisite_failed"
+          ]
+        },
+        "capability_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
     "detectionEvidence": {
       "type": "object",
       "required": ["schema_version", "detector", "status", "text_characters", "details"],

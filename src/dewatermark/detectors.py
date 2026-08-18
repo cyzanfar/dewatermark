@@ -10,19 +10,29 @@ from typing import Any, Mapping, Optional, cast
 from .exceptions import ConfigurationError
 from .extension_safety import require_extension, static_capability
 from .models import CapabilityManifest, DetectionEvidence, DetectionStatus
-from .request_context import safe_error
+from .request_context import (
+    ResourceBudgetExceeded,
+    begin_extension_usage,
+    checkpoint,
+    extension_usage_error,
+    safe_error,
+)
 from .unicode import analyze
 
 _PUBLIC_EVIDENCE_DETAIL_KEYS = {
     "configuration_sha256",
     "effective_tokens",
+    "green_hits",
+    "mean_g_value",
     "mismatch_fields",
     "p_value",
     "protocol_version",
+    "reference_only",
     "reason_code",
     "reported_status",
     "score_direction",
     "total_flags",
+    "vendor_equivalent",
     "z_score",
 }
 _GENERIC_UNSUPPORTED_REASON = "No public, independently usable detector is available."
@@ -86,9 +96,12 @@ def _finite_number(value: Any) -> Optional[float]:
 
 
 def _trusted_detector_reason(detector: Any, capability: CapabilityManifest) -> bool:
-    return isinstance(detector, (UnsupportedDetector, UnicodeArtifactDetector)) or bool(
-        capability.metadata.get("command_protocol_version")
-    )
+    from .reference_detectors import ReferenceStatisticalDetector
+
+    return isinstance(
+        detector,
+        (UnsupportedDetector, UnicodeArtifactDetector, ReferenceStatisticalDetector),
+    ) or bool(capability.metadata.get("command_protocol_version"))
 
 
 class _UnsupportedDetectorFactory:
@@ -165,7 +178,15 @@ class UnicodeArtifactDetector:
         schemes=("unicode-artifacts",),
         description="Deterministic suspicious-Unicode artifact analysis.",
         calibrated=True,
-        independent=True,
+        # The sanitizer and detector intentionally share one literal-codepoint
+        # policy. This is exact policy verification, not an independent
+        # statistical implementation.
+        independent=False,
+        metadata={
+            "status": "deterministic_policy",
+            "evidence_level": "same_policy",
+            "verification_basis": "literal_codepoint_policy",
+        },
     )
 
     def __init__(self, _config: Any = None) -> None:
@@ -189,6 +210,8 @@ class UnicodeArtifactDetector:
 
 
 def builtin_detector_factories() -> dict[str, Any]:
+    from .reference_detectors import reference_detector_factories
+
     anthropic = _UnsupportedDetectorFactory(
         "anthropic-claude",
         "anthropic-claude",
@@ -203,7 +226,7 @@ def builtin_detector_factories() -> dict[str, Any]:
         source="https://github.com/google-deepmind/synthid-text",
         source_status="reference_implementation_only",
     )
-    return {
+    factories = {
         "unicode": UnicodeArtifactDetector,
         "unicode-artifacts-v1": UnicodeArtifactDetector,
         "anthropic": anthropic,
@@ -213,6 +236,8 @@ def builtin_detector_factories() -> dict[str, Any]:
         "gemini-production": synthid_production,
         "synthid-production": synthid_production,
     }
+    factories.update(reference_detector_factories())
+    return factories
 
 
 def capability_of(detector: Any, fallback: str = "custom-detector") -> CapabilityManifest:
@@ -315,6 +340,7 @@ def run_detector(
     fallback_name: str = "custom-detector",
     config: Any = None,
 ) -> DetectionEvidence:
+    checkpoint()
     try:
         capability = require_extension(detector, "detector", config)
     except PermissionError:
@@ -362,7 +388,14 @@ def run_detector(
             reason=f"detector requires at least {capability.minimum_characters} characters",
         )
     try:
-        if hasattr(detector, "available") and not detector.available():
+        usage_snapshot, accounting = begin_extension_usage(capability)
+        if hasattr(detector, "available"):
+            available = detector.available()
+            if type(available) is not bool:
+                raise TypeError("detector availability must be boolean")
+        else:
+            available = True
+        if not available:
             # UnsupportedDetector carries the precise reason through detect().
             if isinstance(detector, UnsupportedDetector):
                 return detector.detect(text)
@@ -373,9 +406,27 @@ def run_detector(
                 text_characters=len(text),
                 reason="detector is unavailable in the active environment",
             )
-        return normalize_detection(
+        evidence = normalize_detection(
             detector.detect(text), detector, text, fallback_name=fallback_name
         )
+        checkpoint()
+        usage_error = extension_usage_error(
+            usage_snapshot,
+            network_required=capability.network_required,
+            resource_accounting=accounting,
+        )
+        if usage_error is not None:
+            return DetectionEvidence(
+                detector=capability.identifier,
+                scheme=capability.schemes[0] if capability.schemes else None,
+                status="configuration_mismatch",
+                threshold=_public_threshold(detector),
+                text_characters=len(text),
+                reason=usage_error,
+            )
+        return evidence
+    except ResourceBudgetExceeded:
+        raise
     except Exception as exc:
         return DetectionEvidence(
             detector=capability.identifier,

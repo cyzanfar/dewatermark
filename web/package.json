@@ -1,0 +1,48 @@
+{
+  "name": "@cyzanfar/dewatermark-unicode",
+  "version": "0.6.0",
+  "description": "Context-aware, local-only Unicode text watermark artifact inspection and sanitation.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./sanitizer.d.ts",
+      "import": "./sanitizer.mjs"
+    },
+    "./policy": "./unicode-policy.mjs"
+  },
+  "types": "./sanitizer.d.ts",
+  "files": [
+    "sanitizer.mjs",
+    "sanitizer.d.ts",
+    "unicode-policy.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "check": "node generate-policy.mjs --check && node package-test.mjs",
+    "prepack": "npm run check"
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "text-watermark-remover",
+    "unicode",
+    "steganography",
+    "security",
+    "privacy"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cyzanfar/text-watermark-remover.git",
+    "directory": "web"
+  },
+  "homepage": "https://cyzanfar.github.io/text-watermark-remover/",
+  "bugs": "https://github.com/cyzanfar/text-watermark-remover/issues",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

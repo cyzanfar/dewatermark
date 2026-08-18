@@ -3,7 +3,10 @@
 ## Validation
 
 - [ ] Tests are deterministic and offline.
-- [ ] `pytest`, Ruff, mypy, build, and Twine checks pass.
+- [ ] `pytest`, Ruff check/format, mypy, OpenAPI export, build, and Twine checks
+      pass.
+- [ ] Relevant browser, npm, Gradle, and evidence-conformance checks pass for
+      changed surfaces.
 - [ ] Public behavior and changelog are updated.
 - [ ] No source text or credentials enter logs/results.
 - [ ] Remote processing and downloads remain opt-in.

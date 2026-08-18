@@ -1,3 +1,6 @@
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -23,9 +26,24 @@ from dewatermark.server import (
 
 
 def test_openapi_has_routes():
-    paths = openapi_schema()["paths"]
+    schema = openapi_schema()
+    paths = schema["paths"]
     assert {"/inspect", "/plan", "/apply", "/verify", "/sanitize"} <= set(paths)
     assert paths["/apply"]["post"]["operationId"] == "applyTransformation"
+    assert schema["security"] == [{"bearerAuth": []}, {}]
+
+
+def test_checked_in_openapi_snapshot_is_current():
+    root = Path(__file__).parents[1]
+    completed = subprocess.run(
+        [sys.executable, "scripts/export_openapi.py"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_process_sanitize_without_network():
@@ -102,6 +120,67 @@ def test_plan_apply_and_verify_are_content_bound():
     report = anthropic_apply["result"]["report"]
     assert report["detection_status"] == "unsupported"
     assert report["verification_status"] == "not_verifiable"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"passes": 0},
+        {"passes": True},
+        {"passes": 1.5},
+        {"epsilon": 99},
+        {"epsilon": "0.3"},
+        {"beta": -1},
+        {"best_of": 7},
+        {"best_of": False},
+    ],
+)
+def test_plan_rejects_options_that_apply_cannot_execute(options):
+    with pytest.raises(ValueError):
+        process_request("/plan", {"text": "private source", "mode": "sanitize", "options": options})
+
+
+def test_plan_normalizes_defaults_and_equivalent_numeric_options():
+    implicit = process_request("/plan", {"text": "private source", "mode": "sanitize"})
+    explicit = process_request(
+        "/plan",
+        {
+            "text": "private source",
+            "mode": "sanitize",
+            "options": {"passes": 2, "epsilon": 0.3, "beta": 6, "best_of": 3},
+        },
+    )
+
+    assert implicit["options"] == {
+        "passes": 2,
+        "epsilon": 0.3,
+        "beta": 6.0,
+        "best_of": 3,
+    }
+    assert explicit["options"] == implicit["options"]
+    assert explicit["plan_digest"] == implicit["plan_digest"]
+
+
+def test_http_contract_rejects_unknown_top_level_and_nested_fields():
+    with pytest.raises(ValueError, match="unsupported fields"):
+        process_request("/plan", {"text": "private source", "unexpected": True})
+    with pytest.raises(ValueError, match="unsupported removal option"):
+        process_request(
+            "/plan",
+            {"text": "private source", "options": {"passes": 2, "unexpected": True}},
+        )
+
+    planned = process_request("/plan", {"text": "private source", "mode": "sanitize"})
+    with pytest.raises(ValueError, match="unsupported fields"):
+        process_request(
+            "/apply",
+            {
+                "text": "private source",
+                "mode": "sanitize",
+                "plan_digest": planned["plan_digest"],
+                "consent": {"transformation": True, "unexpected": True},
+            },
+        )
 
 
 def test_plan_binds_verification_policy_and_redacted_config():

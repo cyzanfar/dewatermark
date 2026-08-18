@@ -271,7 +271,7 @@ SCHEMES = {
             "configuration_sha256": _configuration_sha256(
                 {"gamma": GAMMA, "context_width": 1, "duplicate_bigrams": "ignored"}
             ),
-            "calibration": {"method": "held-out empirical null", "threshold_operator": ">"},
+            "calibration": {"method": "held_out_empirical_null", "threshold_operator": ">"},
         },
     },
     "Unigram": {
@@ -295,7 +295,7 @@ SCHEMES = {
             "minimum_tokens": 1,
             "key_fingerprint": _key_fingerprint(UNIGRAM_KEY),
             "configuration_sha256": _configuration_sha256({"gamma": GAMMA}),
-            "calibration": {"method": "held-out empirical null", "threshold_operator": ">"},
+            "calibration": {"method": "held_out_empirical_null", "threshold_operator": ">"},
         },
     },
     "EXP": {
@@ -324,8 +324,8 @@ SCHEMES = {
                 "generation_arguments": dict(EXP_DECODING),
                 "only_difference": "logits_processor",
             },
-            "calibration": {"method": "held-out empirical null", "threshold_operator": ">"},
-            "limitations": ["not the official EXP/ITS implementation"],
+            "calibration": {"method": "held_out_empirical_null", "threshold_operator": ">"},
+            "limitations": ["not_official_exp_its_implementation"],
         },
     },
 }

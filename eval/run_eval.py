@@ -29,14 +29,17 @@ try:
     from . import metrics, schemes, stego
     from .adapters import CommandScheme
     from .calibration import select_strength
-    from .manifest import content_addressed_score_table
+    from .manifest import content_addressed_score_table, public_model_identifier
+    from .resources import model_size_bytes, resource_snapshot, resource_telemetry
 except ImportError:  # direct ``python eval/run_eval.py`` compatibility
     import metrics  # type: ignore
     import schemes  # type: ignore
     import stego  # type: ignore
-    from adapters import CommandScheme  # type: ignore
     from calibration import select_strength  # type: ignore
-    from manifest import content_addressed_score_table  # type: ignore
+    from manifest import content_addressed_score_table, public_model_identifier  # type: ignore
+    from resources import model_size_bytes, resource_snapshot, resource_telemetry  # type: ignore
+
+    from adapters import CommandScheme  # type: ignore
 
 RESULTS_PATH = Path.cwd() / "dewatermark-results.md"
 
@@ -81,6 +84,7 @@ def _evaluation_config_manifest(config) -> dict:
     value["llm_api_key_configured"] = bool(config.llm_api_key)
     value.pop("fireworks_api_key", None)
     value.pop("llm_api_key", None)
+    value["local_lm"] = public_model_identifier(config.local_lm)
     for key in ("fireworks_base_url", "llm_base_url"):
         endpoint = str(value.pop(key, ""))
         value[f"{key}_sha256"] = hashlib.sha256(endpoint.encode()).hexdigest()
@@ -151,6 +155,7 @@ def _mode_metrics(
     seed=0,
     positive_cluster_ids=None,
     null_cluster_ids=None,
+    bootstrap_replicates=500,
 ):
     source_calibration = metrics.calibration_report(calibration_plain_before, 0.01)
     candidate_calibration = metrics.calibration_report(calibration_plain_after, 0.01)
@@ -165,9 +170,35 @@ def _mode_metrics(
     after_auc = metrics.auroc(after, plain_after)
     row = {
         "auroc_before": before_auc,
-        "auroc_before_ci95": metrics.bootstrap_auroc_interval(before, plain_before, seed=seed),
+        "auroc_before_ci95": metrics.cluster_bootstrap_auroc_interval(
+            before,
+            plain_before,
+            positive_cluster_ids=positive_cluster_ids,
+            negative_cluster_ids=null_cluster_ids,
+            seed=seed,
+            replicates=bootstrap_replicates,
+        ),
         "auroc_after": after_auc,
-        "auroc_after_ci95": metrics.bootstrap_auroc_interval(after, plain_after, seed=seed + 1),
+        "auroc_after_ci95": metrics.cluster_bootstrap_auroc_interval(
+            after,
+            plain_after,
+            positive_cluster_ids=positive_cluster_ids,
+            negative_cluster_ids=null_cluster_ids,
+            seed=seed + 1,
+            replicates=bootstrap_replicates,
+        ),
+        "auroc_delta": after_auc - before_auc,
+        "auroc_delta_ci95": metrics.paired_cluster_bootstrap_auroc_delta_interval(
+            before,
+            after,
+            plain_before,
+            plain_after,
+            positive_cluster_ids=positive_cluster_ids,
+            null_cluster_ids=null_cluster_ids,
+            seed=seed + 2,
+            replicates=bootstrap_replicates,
+        ),
+        "auroc_interval_method": "paired prompt/document-cluster percentile bootstrap",
         "mean_before": sum(before) / len(before),
         "mean_after": sum(after) / len(after),
         "flagged_after": flagged,
@@ -193,11 +224,28 @@ def _mode_metrics(
             if candidate_threshold is None
             else candidate_threshold,
             bootstrap_seed=seed,
+            bootstrap_replicates=bootstrap_replicates,
             positive_cluster_ids=positive_cluster_ids,
             null_cluster_ids=null_cluster_ids,
         ),
     }
     for fpr in FPRS:
+        fixed_report = metrics.fixed_fpr_paired_report(
+            before,
+            after,
+            plain_before,
+            plain_after,
+            calibration_plain_before,
+            calibration_plain_after,
+            fpr=fpr,
+            positive_cluster_ids=positive_cluster_ids,
+            null_cluster_ids=null_cluster_ids,
+            bootstrap_replicates=bootstrap_replicates,
+            bootstrap_seed=seed + int(round(-math.log10(fpr))) * 100,
+        )
+        row[f"fixed_fpr_inference@{fpr}"] = fixed_report
+        if fixed_report.get("estimable"):
+            row[f"paired_outcomes@{fpr}"] = fixed_report["paired_outcomes"]
         before_cal = metrics.calibration_report(calibration_plain_before, fpr)
         after_cal = metrics.calibration_report(calibration_plain_after, fpr)
         before_threshold = before_cal.get("threshold")
@@ -214,16 +262,19 @@ def _mode_metrics(
             if after_threshold is not None and after
             else float("nan")
         )
-        row[f"tpr_before_ci95@{fpr}"] = (
-            metrics.wilson_interval(sum(value > before_threshold for value in before), len(before))
-            if before_threshold is not None and before
-            else (float("nan"), float("nan"))
-        )
-        row[f"tpr_after_ci95@{fpr}"] = (
-            metrics.wilson_interval(sum(value > after_threshold for value in after), len(after))
-            if after_threshold is not None and after
-            else (float("nan"), float("nan"))
-        )
+        for metric_name in (
+            "tpr_before_row_level_wilson_ci95",
+            "tpr_before_cluster_bootstrap_ci95",
+            "tpr_after_row_level_wilson_ci95",
+            "tpr_after_cluster_bootstrap_ci95",
+            "test_fpr_before_row_level_wilson_ci95",
+            "test_fpr_before_cluster_bootstrap_ci95",
+            "test_fpr_after_row_level_wilson_ci95",
+            "test_fpr_after_cluster_bootstrap_ci95",
+        ):
+            row[f"{metric_name}@{fpr}"] = fixed_report.get(
+                metric_name, (float("nan"), float("nan"))
+            )
         row[f"test_fpr_before@{fpr}"] = (
             sum(value > before_threshold for value in plain_before) / len(plain_before)
             if before_threshold is not None and plain_before
@@ -234,15 +285,11 @@ def _mode_metrics(
             if after_threshold is not None and plain_after
             else float("nan")
         )
-        row[f"test_fpr_after_ci95@{fpr}"] = (
-            metrics.wilson_interval(
-                sum(value > after_threshold for value in plain_after), len(plain_after)
-            )
-            if after_threshold is not None and plain_after
-            else (float("nan"), float("nan"))
-        )
     if flagged is not None:
-        row["tpr_after_ci95"] = metrics.wilson_interval(flagged, len(after))
+        row["tpr_after_row_level_wilson_ci95"] = metrics.wilson_interval(flagged, len(after))
+        row["row_level_interval_scope"] = (
+            "descriptive only; cluster bootstrap intervals are the inferential summaries"
+        )
     return row
 
 
@@ -262,7 +309,10 @@ def _generate_population(sc, tok, model, *, scheme_name, cohort, count, length, 
         )
         texts.append(text)
         sample_seeds.append(sample_seed)
-        metadata_rows.append(_metadata(sc.get("generation_metadata")))
+        metadata = _metadata(sc.get("generation_metadata"))
+        metadata.setdefault("requested_tokens", length)
+        metadata.setdefault("effective_tokens", _effective_tokens(text, tok))
+        metadata_rows.append(metadata)
     return texts, metadata_rows, sample_seeds
 
 
@@ -270,8 +320,22 @@ def _detect_population(detector, texts, tok):
     scores, metadata_rows = [], []
     for text in texts:
         scores.append(detector["detect"](text, tok))
-        metadata_rows.append(_metadata(detector.get("detection_metadata")))
+        metadata = _metadata(detector.get("detection_metadata"))
+        metadata.setdefault("effective_tokens", _effective_tokens(text, tok))
+        metadata_rows.append(metadata)
     return scores, metadata_rows
+
+
+def _effective_tokens(text, tok):
+    """Best-effort exact tokenizer count for built-ins lacking runtime metadata."""
+    try:
+        encoded = tok(text, return_tensors="pt", add_special_tokens=False).input_ids
+        if hasattr(encoded, "shape"):
+            return int(encoded.shape[-1])
+        first = encoded[0] if encoded and isinstance(encoded[0], (list, tuple)) else encoded
+        return len(first)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
 
 
 def _transform_population(texts, mode, *, label, failure_policy):
@@ -279,11 +343,11 @@ def _transform_population(texts, mode, *, label, failure_policy):
     for index, text in enumerate(texts):
         try:
             candidate, outcome = _remove_with_outcome(text, mode)
-        except Exception as exc:
-            error_name = type(exc).__name__
-            print(f"  ! {label}/{mode} sample {index} failed: {error_name}", file=sys.stderr)
+        except Exception:
+            error_name = "transformation_exception"
+            print(f"  ! sample {index} transformation failed", file=sys.stderr)
             if failure_policy == "strict":
-                raise RuntimeError(f"{label}/{mode} sample {index} failed") from None
+                raise RuntimeError("sample transformation failed; details were redacted") from None
             candidate = text
             outcome = {
                 "state": "failed",
@@ -416,11 +480,15 @@ def _composite_success(source_scores, candidate_scores, outcomes, quality_passes
     source_flags = [_is_flagged(value, source_threshold) for value in source_scores]
     candidate_flags = [_is_flagged(value, candidate_threshold) for value in candidate_scores]
     eligible = sum(value is True for value in source_flags)
-    successes = sum(
+    success_bools = [
         source is True and candidate is False and outcome.get("state") == "accepted" and quality
         for source, candidate, outcome, quality in zip(
             source_flags, candidate_flags, outcomes, quality_passes
         )
+    ]
+    successes = sum(success_bools)
+    denominator_report = metrics.attempt_outcome_report(
+        [str(outcome.get("state")) for outcome in outcomes], success_bools
     )
     return {
         "definition": "source flagged, candidate cleared, transform accepted, quality gate passed",
@@ -430,6 +498,8 @@ def _composite_success(source_scores, candidate_scores, outcomes, quality_passes
         "rate_over_initially_detected": successes / eligible if eligible else float("nan"),
         "rate_over_attempted": successes / len(source_scores) if source_scores else float("nan"),
         "ci95_over_initially_detected": metrics.wilson_interval(successes, eligible),
+        "ci95_over_attempted": metrics.wilson_interval(successes, len(source_scores)),
+        "all_attempt_outcomes": denominator_report,
     }
 
 
@@ -451,6 +521,7 @@ def run_statistical_suite(
     include_text_artifacts=False,
     allow_network=False,
     cross_detectors=None,
+    bootstrap_replicates=500,
 ):
     print("[statistical] loading generator ...")
     schemes.reset_strengths()
@@ -464,6 +535,7 @@ def run_statistical_suite(
     bert = metrics.BERTScoreScorer(
         allow_network=allow_network, allow_model_download=allow_model_download
     )
+    loaded_model_bytes = model_size_bytes(model)
     results = {}
     for scheme_name in scheme_names:
         sc = schemes.SCHEMES[scheme_name]
@@ -554,6 +626,7 @@ def run_statistical_suite(
             "modes": {},
         }
         for mode in modes:
+            mode_started = resource_snapshot()
             cleaned_texts, positive_outcomes = _transform_population(
                 wm_texts,
                 mode,
@@ -639,6 +712,7 @@ def run_statistical_suite(
                 seed=schemes.sample_seed(seed, scheme_name, mode, "bootstrap"),
                 positive_cluster_ids=[index % len(PROMPTS) for index in range(samples)],
                 null_cluster_ids=[index % len(PROMPTS) for index in range(null_samples)],
+                bootstrap_replicates=bootstrap_replicates,
             )
             paired = mode_result["paired_outcomes@0.01"]
             source_threshold = paired.get("source_threshold")
@@ -713,7 +787,10 @@ def run_statistical_suite(
                         else "unavailable-runtime"
                     )
                 ),
-                "perplexity": f"generator:{model_name}@{model_revision or 'unresolved'}",
+                "perplexity": (
+                    f"generator:{public_model_identifier(model_name)}@"
+                    f"{model_revision or 'unresolved'}"
+                ),
             }
             mode_result["transformation_denominators"] = {
                 "positive": _transformation_summary(positive_outcomes),
@@ -762,6 +839,7 @@ def run_statistical_suite(
                     seed=schemes.sample_seed(seed, scheme_name, mode, detector_name, "bootstrap"),
                     positive_cluster_ids=[index % len(PROMPTS) for index in range(samples)],
                     null_cluster_ids=[index % len(PROMPTS) for index in range(null_samples)],
+                    bootstrap_replicates=bootstrap_replicates,
                 )
                 d_paired = cross_metrics["paired_outcomes@0.01"]
                 cross_tables = {
@@ -838,6 +916,25 @@ def run_statistical_suite(
                         quality_passes,
                     )
                 )
+                cross_attempts = metrics.attempt_outcome_report(
+                    [str(outcome.get("state")) for outcome in positive_outcomes],
+                    [
+                        primary_source is True
+                        and cross_source is True
+                        and primary_candidate is False
+                        and cross_candidate is False
+                        and outcome.get("state") == "accepted"
+                        and quality
+                        for primary_source, cross_source, primary_candidate, cross_candidate, outcome, quality in zip(
+                            primary_source_flags,
+                            cross_source_flags,
+                            primary_candidate_flags,
+                            cross_candidate_flags,
+                            positive_outcomes,
+                            quality_passes,
+                        )
+                    ],
+                )
                 cross_results[detector_name] = {
                     "manifest": detector.get("manifest", {}),
                     "metrics": cross_metrics,
@@ -856,6 +953,7 @@ def run_statistical_suite(
                         if both_source_flagged
                         else float("nan"),
                         "ci95": metrics.wilson_interval(both_cleared, both_source_flagged),
+                        "all_attempt_outcomes": cross_attempts,
                     },
                 }
                 if artifact_sink:
@@ -872,6 +970,25 @@ def run_statistical_suite(
                             }
                         )
             mode_result["cross_detectors"] = cross_results
+            generated_token_counts = [
+                value.get("effective_tokens")
+                for value in (
+                    positive_generation_meta + plain_generation_meta + calibration_generation_meta
+                )
+                if isinstance(value.get("effective_tokens"), int)
+            ]
+            mode_result["resource_telemetry"] = resource_telemetry(
+                mode_started,
+                model_bytes=loaded_model_bytes,
+                remote_queries=None if allow_network else 0,
+                generated_tokens=sum(generated_token_counts) if generated_token_counts else None,
+                estimated_cost_usd=None if allow_network else 0.0,
+                operations={
+                    "transform": samples + 2 * null_samples,
+                    "primary_detection": samples + 2 * null_samples,
+                    "cross_detection": len(cross_detectors or {}) * (samples + 2 * null_samples),
+                },
+            )
             scheme_res["modes"][mode] = mode_result
         results[scheme_name] = scheme_res
     return results
@@ -891,7 +1008,7 @@ def write_results(unicode_rows, stat_results, args, output_path=RESULTS_PATH):
         "",
         f"- Date: {args.date}",
         f"- dewatermark {dewatermark.__version__}  |  lm_backend: `{cfg.resolved_lm_backend}`"
-        f"  |  local rewriter: `{args.local_lm}`",
+        f"  |  local rewriter: `{public_model_identifier(args.local_lm)}`",
         (
             f"- Statistical: {args.samples} positives + {args.null_samples} matched "
             f"nulls/scheme at lengths {args.lengths or args.length} tokens, seed {args.seed}"
@@ -980,7 +1097,7 @@ def write_results(unicode_rows, stat_results, args, output_path=RESULTS_PATH):
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"Results written to {output_path}")
+    print("Results written.")
 
 
 def main() -> None:
@@ -1041,6 +1158,12 @@ def main() -> None:
     )
     p.add_argument("--strength-grid", default="0.5,1,2,4,8")
     p.add_argument("--calibration-samples", type=int, default=100)
+    p.add_argument(
+        "--bootstrap-replicates",
+        type=int,
+        default=500,
+        help="deterministic prompt/document-cluster bootstrap replicates",
+    )
     p.add_argument("--output", type=Path, default=RESULTS_PATH)
     p.add_argument("--json-output", type=Path, default=None)
     p.add_argument("--checkpoint", type=Path, default=Path("dewatermark-eval.jsonl"))
@@ -1052,8 +1175,16 @@ def main() -> None:
         help="include generated text in checkpoints; hashes are the privacy-safe default",
     )
     args = p.parse_args()
-    if args.samples < 1 or args.null_samples < 1 or args.calibration_samples < 1:
-        p.error("--samples, --null-samples, and --calibration-samples must be positive")
+    if (
+        args.samples < 1
+        or args.null_samples < 1
+        or args.calibration_samples < 1
+        or args.bootstrap_replicates < 2
+    ):
+        p.error(
+            "--samples, --null-samples, and --calibration-samples must be positive; "
+            "--bootstrap-replicates must be at least 2"
+        )
     if args.length < 1:
         p.error("--length must be positive")
     if args.seed < 0:
@@ -1092,7 +1223,7 @@ def main() -> None:
     }
     unknown_modes = sorted(set(selected_modes) - valid_modes)
     if unknown_modes:
-        p.error(f"unknown removal modes: {', '.join(unknown_modes)}")
+        p.error("one or more requested removal modes are unknown")
     args.schemes = ",".join(selected_schemes)
     args.modes = ",".join(selected_modes)
     if not args.date:
@@ -1113,11 +1244,11 @@ def main() -> None:
                 "detection_metadata": detector.detection_metadata,
                 "manifest": detector.manifest(),
             }
-    except (RuntimeError, ValueError) as exc:
-        p.error(str(exc))
+    except (RuntimeError, ValueError):
+        p.error("adapter configuration is invalid; exception details were redacted")
     unknown_schemes = sorted(set(selected_schemes) - set(schemes.SCHEMES))
     if unknown_schemes:
-        p.error(f"unknown schemes: {', '.join(unknown_schemes)}")
+        p.error("one or more requested schemes are unknown")
     for scheme_name in selected_schemes:
         scheme_manifest = schemes.SCHEMES[scheme_name].get("manifest", {})
         minimum = int(
@@ -1175,7 +1306,10 @@ def main() -> None:
     }
     manifest["dewatermark_config"] = _evaluation_config_manifest(dewatermark.get_config())
     manifest["runtime_backends"] = {
-        "generator": {"model": args.local_lm, "revision": args.model_revision},
+        "generator": {
+            "model": public_model_identifier(args.local_lm),
+            "revision": args.model_revision,
+        },
         "remover": {
             "backend": dewatermark.get_config().resolved_lm_backend,
             "network_allowed": args.allow_network,
@@ -1201,13 +1335,10 @@ def main() -> None:
     if args.resume:
         try:
             ensure_resume_compatible(args.checkpoint, manifest)
-        except IncompatibleResumeError as exc:
-            p.error(str(exc))
+        except IncompatibleResumeError:
+            p.error("checkpoint is incompatible with this run; details were redacted")
     elif args.checkpoint.exists() and args.checkpoint.stat().st_size:
-        p.error(
-            f"checkpoint already exists: {args.checkpoint}; use --resume only for the "
-            "same run or choose a new --checkpoint"
-        )
+        p.error("checkpoint already exists; use --resume only for the same run")
     else:
         append_checkpoint(
             args.checkpoint, {"event": "run.started", "run_id": run_id, "manifest": manifest}
@@ -1239,6 +1370,7 @@ def main() -> None:
                 args.include_text_artifacts,
                 args.allow_network,
                 cross_detectors,
+                args.bootstrap_replicates,
             )
             for name, result in one.items():
                 stat_results[f"{name}@{length}"] = result
@@ -1269,8 +1401,8 @@ def main() -> None:
             {
                 "unicode": unicode_rows is not None,
                 "statistical": stat_results is not None,
-                "output": str(args.output),
-                "json_output": str(args.json_output) if args.json_output else None,
+                "report_written": True,
+                "json_written": args.json_output is not None,
                 "run_id": run_id,
             }
         )
