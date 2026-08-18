@@ -71,8 +71,14 @@ def test_manifest_projection_does_not_invoke_or_reflect_arbitrary_objects(tmp_pa
     assert secret not in json.dumps(manifest, sort_keys=True)
 
 
-def test_manifest_hashes_host_local_model_paths_but_keeps_registry_ids():
-    private_path = "/Users/alice/private/models/reviewed-nli"
+@pytest.mark.parametrize(
+    "private_path",
+    [
+        "/Users/alice/private/models/reviewed-nli",
+        r"C:\Users\alice\private\models\reviewed-nli",
+    ],
+)
+def test_manifest_hashes_host_local_model_paths_but_keeps_registry_ids(private_path):
     manifest = environment_manifest(
         Namespace(local_lm=private_path, adapter=[], cross_detector=[], skip_statistical=True)
     )

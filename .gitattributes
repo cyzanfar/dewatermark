@@ -1,0 +1,3 @@
+# Keep checked-out text byte-stable across platforms. Some fixtures are
+# content-addressed from their on-disk bytes.
+* text=auto eol=lf

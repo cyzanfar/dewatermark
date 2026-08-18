@@ -16,7 +16,7 @@ import platform
 import re
 import sys
 from importlib import metadata
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Mapping
 
 from dewatermark.bounded_process import BoundedProcessFailure, run_bounded_process
@@ -69,7 +69,7 @@ def _private_path_string(value: str) -> bool:
     if value.startswith(("./", "../", ".\\", "..\\", "~/", "~\\", "file://")):
         return True
     try:
-        return Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+        return PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()
     except (OSError, ValueError):
         return True
 

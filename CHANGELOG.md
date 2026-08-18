@@ -99,7 +99,8 @@ forward into this release candidate.
 - The pinned build backend remains installable on the declared Python 3.9
   compatibility floor.
 - The packaged KGW adapter capability now matches the exact byte digest of its
-  canonical golden-vector fixture.
+  canonical golden-vector fixture, with LF checkouts enforced so that digest is
+  stable on Windows.
 - Replaced non-resolving public JSON Schema identifiers with directly
   retrievable source URLs.
 

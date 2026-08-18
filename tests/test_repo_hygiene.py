@@ -5,6 +5,11 @@ ROOT = Path(__file__).parents[1]
 ACTION_REFERENCE = re.compile(r"^\s*(?:-\s+)?uses:\s+([^\s#]+)")
 
 
+def test_text_files_have_cross_platform_stable_line_endings():
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+    assert "* text=auto eol=lf" in attributes
+
+
 def test_generated_and_private_outputs_are_excluded_from_build_context():
     patterns = set((ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines())
     required = {
