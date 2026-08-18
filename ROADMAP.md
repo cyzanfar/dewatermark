@@ -2,6 +2,23 @@
 
 dewatermark aims to be the most trustworthy open-source toolkit for inspecting and mitigating text watermark artifacts—not the loudest universal-removal claim.
 
+## Released in v0.7.0
+
+- Request-scoped detector sessions, bounded signal localization, and a
+  detector-guided optimizer that returns the exact source unless central
+  quality gates and a distinct held-out detector verify the smallest candidate
+- Strict local command-strategy adapters with shared consent, query, token,
+  process, deadline, cancellation, and credential-redaction controls
+- Exact, content-addressed KGW and Unigram natural-text reference
+  configurations plus operator sealing for local tokenizer and key material;
+  all included statistical packs remain explicitly uncalibrated and
+  non-production
+- A resumable registered KGW benchmark runner with matched decoding, private
+  key partitions, cluster-level inference, fixed-family multiplicity control,
+  strict checkpoints, persistent budgets, and content-free evidence artifacts
+- Public Python, CLI, HTTP/OpenAPI, and MCP contracts for localization and
+  detector-guided mitigation, with policy-bound caches and exact rollback
+
 ## Released in v0.6.0
 
 - Dependency-free KGW-, Unigram-, and tournament-style contract fixtures,

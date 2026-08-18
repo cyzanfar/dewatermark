@@ -1,0 +1,45 @@
+{
+  "calibrated": false,
+  "description": "Readable closed-vocabulary KGW conformance fixture cross-conformed with the pinned author implementation; analytical threshold only, not production detection.",
+  "identifier": "reference-upstream/kgw-simple1-natural-profile-v1",
+  "independent": true,
+  "kind": "detector",
+  "metadata": {
+    "calibration": "analytical_only_not_empirically_calibrated",
+    "command_protocol_version": "1.1",
+    "configuration_sha256": "9927e08f40954293b9c5a10f7b344988b90ceab61eefeee3217e185ee6b28379",
+    "cross_implementation_conformance": {
+      "passed": true,
+      "record_sha256": "e6f71c1924eff69081814490b8f68a84f93e098b8a58fce48e99f18fd4d578fd",
+      "vectors_sha256": "518a16f2276d7b48913b512b80edbcbfeb9d1f0bad2068a718972f2eab496a86"
+    },
+    "evidence_level": "independent_detector",
+    "key_id": "ab2e335a5c87e152c8e8c2bfc8fa0924",
+    "minimum_effective_tokens": 32,
+    "production_detection": false,
+    "profile_manifest_sha256": "3c8e40142ca4ac47cc09f1377da1aaaf3176c1286162881b22e287781197b823",
+    "score_direction": "higher",
+    "threshold_operator": ">",
+    "source": "https://github.com/jwkirchenbauer/lm-watermarking",
+    "source_file_sha256": "512c40644bc9e9932a8674bbf13046c1a4e92db429cff92afc9e90d2226896fc",
+    "source_license": "Apache-2.0",
+    "source_revision": "82922516930c02f8aa322765defdb5863d07a00e",
+    "status": "exact_public_natural_reference_configuration",
+    "threat_models": [
+      "T2"
+    ],
+    "threshold": 4.0,
+    "threshold_evidence_sha256": "8865c05e971de4389626c229e4652dce00a1be2ce3c4546bd0e898ecc3d48019",
+    "tokenizer_sha256": "0aace7d58e4d3b208359956e00057b9be16f1df912a5aad9067070922b918401",
+    "upstream_equivalent_for_reference_configuration": true,
+    "vendor_equivalent": false
+  },
+  "minimum_characters": 0,
+  "model_download_possible": false,
+  "network_required": false,
+  "requires_secret": false,
+  "schemes": [
+    "kgw/simple-1-natural-reference-v1"
+  ],
+  "version": "1.0"
+}

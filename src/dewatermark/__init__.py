@@ -12,6 +12,8 @@ Two watermark families:
 
 from __future__ import annotations
 
+from typing import Sequence
+
 from ._version import __version__
 from .adapter_packs import adapter_pack_manifest, list_adapter_packs, materialize_adapter_pack
 from .agent_skill import agent_skill_path, materialize_agent_skill
@@ -41,7 +43,29 @@ from .command_detector import (
     make_command_detector_factory,
     run_command_detector_conformance,
 )
+from .command_strategy import (
+    COMMAND_STRATEGY_PROTOCOL_VERSION,
+    CommandStrategy,
+    CommandStrategyConsentError,
+    CommandStrategyContractError,
+    CommandStrategyError,
+    CommandStrategyExecutionError,
+    CommandStrategyFactory,
+    command_strategy_manifest,
+    make_command_strategy_factory,
+    strategy_configuration_sha256,
+)
 from .config import DewatermarkConfig, configure, get_config, reset_config
+from .detector_session import (
+    DetectorObservation,
+    DetectorPolicyDriftError,
+    DetectorQueryBudgetExceeded,
+    DetectorSession,
+    DetectorSessionScopeError,
+    SessionVerification,
+    SignalSpan,
+    VerifierObservation,
+)
 from .detector_tools import (
     DetectorDoctorCheck,
     DetectorDoctorReport,
@@ -59,6 +83,11 @@ from .exceptions import (
     QualityRejectedError,
     RemoteProcessingDeniedError,
 )
+from .localization import (
+    LocalizationReport,
+    LocalizedSignal,
+    localize,
+)
 from .models import (
     BatchItemResult,
     CapabilityManifest,
@@ -73,6 +102,18 @@ from .models import (
     TransformationStatus,
     VerificationEvidence,
     VerificationStatus,
+)
+from .optimizer import (
+    CandidateProposal,
+    CandidateStrategy,
+    DetectorFeedback,
+    MitigationReceipt,
+    MitigationResult,
+    SearchLimits,
+    SearchTraceEvent,
+    StrategyBinding,
+    StrategyContext,
+    mitigate,
 )
 from .pipeline import RemovalResult
 from .pipeline import aremove as _aremove
@@ -141,19 +182,32 @@ from .scanner_config import (
     resolve_scanner_config,
 )
 from .schemas import (
+    benchmark_comparator_registry_schema,
     benchmark_evidence_bundle_schema,
+    benchmark_input_corpus_schema,
     benchmark_observation_set_schema,
+    benchmark_protocol_manifest_schema,
     benchmark_replication_record_schema,
+    benchmark_run_config_schema,
     benchmark_sample_registry_schema,
     command_detector_schema,
+    command_strategy_schema,
     detector_capability_schema,
     evidence_receipt_schema,
+    localization_result_schema,
+    mitigation_result_schema,
     openapi_document,
     public_schema,
     removal_result_schema,
 )
 from .scoring import ScorerUnavailable, clear_cache, self_information, surrogate_score
-from .unicode import UNICODE_POLICY_VERSION, reverse_edits, sanitize_with_edits
+from .strategies import RegisteredProviderStrategy, registered_strategy
+from .unicode import (
+    UNICODE_POLICY_SHA256,
+    UNICODE_POLICY_VERSION,
+    reverse_edits,
+    sanitize_with_edits,
+)
 from .unicode import analyze as _analyze
 from .unicode import sanitize as _sanitize_with_report
 
@@ -169,17 +223,30 @@ __all__ = [
     "CapabilityManifest",
     "CachedTransformersNLIAdapter",
     "COMMAND_DETECTOR_PROTOCOL_VERSION",
+    "COMMAND_STRATEGY_PROTOCOL_VERSION",
     "CommandDetector",
     "CommandDetectorConformanceError",
     "CommandDetectorContractError",
     "CommandDetectorError",
     "CommandDetectorExecutionError",
     "CommandDetectorFactory",
+    "CommandStrategy",
+    "CommandStrategyConsentError",
+    "CommandStrategyContractError",
+    "CommandStrategyError",
+    "CommandStrategyExecutionError",
+    "CommandStrategyFactory",
     "ConfigurationError",
     "ConsentRequiredError",
     "CitationGroundingGate",
     "DetectionEvidence",
     "DetectionStatus",
+    "DetectorFeedback",
+    "DetectorObservation",
+    "DetectorPolicyDriftError",
+    "DetectorQueryBudgetExceeded",
+    "DetectorSession",
+    "DetectorSessionScopeError",
     "DetectorConformanceCase",
     "DetectorConformanceReport",
     "DetectorDoctorCheck",
@@ -192,6 +259,10 @@ __all__ = [
     "EntityLinkingGate",
     "EvidenceReceipt",
     "ExecutionPlan",
+    "LocalizedSignal",
+    "LocalizationReport",
+    "MitigationReceipt",
+    "MitigationResult",
     "RemovalMode",
     "RemovalReport",
     "RemovalResult",
@@ -201,17 +272,28 @@ __all__ = [
     "QualityGateDecision",
     "QualityGateOutcome",
     "QualityReport",
+    "RegisteredProviderStrategy",
     "ScorerUnavailable",
     "SanitizeProfile",
+    "SearchLimits",
+    "SearchTraceEvent",
     "ScanEdit",
     "ScannerConfig",
     "StageResult",
+    "StrategyBinding",
+    "StrategyContext",
+    "CandidateProposal",
+    "CandidateStrategy",
+    "SessionVerification",
+    "SignalSpan",
     "TransformationStatus",
     "UNICODE_POLICY_VERSION",
+    "UNICODE_POLICY_SHA256",
     "UnicodeArtifactDetector",
     "UnsupportedDetector",
     "VerificationEvidence",
     "VerificationStatus",
+    "VerifierObservation",
     "PlanMismatchError",
     "PairwiseAssessment",
     "KGWReferenceDetector",
@@ -224,8 +306,12 @@ __all__ = [
     "UnigramReferenceDetector",
     "apply_plan",
     "benchmark_evidence_bundle_schema",
+    "benchmark_comparator_registry_schema",
+    "benchmark_input_corpus_schema",
     "benchmark_observation_set_schema",
+    "benchmark_protocol_manifest_schema",
     "benchmark_replication_record_schema",
+    "benchmark_run_config_schema",
     "benchmark_sample_registry_schema",
     "assert_command_detector_conformance",
     "assert_reference_conformance",
@@ -238,6 +324,8 @@ __all__ = [
     "changed_lines_from_unified_diff",
     "command_detector_manifest",
     "command_detector_schema",
+    "command_strategy_manifest",
+    "command_strategy_schema",
     "configure",
     "conform_reference_detectors",
     "create_plan",
@@ -259,11 +347,16 @@ __all__ = [
     "list_detectors",
     "list_adapter_packs",
     "list_providers",
+    "localization_result_schema",
+    "localize",
     "load_reference_golden_vectors",
     "load_scanner_config",
     "make_command_detector_factory",
+    "make_command_strategy_factory",
     "materialize_adapter_pack",
     "materialize_agent_skill",
+    "mitigate",
+    "mitigation_result_schema",
     "openapi_document",
     "plan",
     "path_is_selected",
@@ -273,6 +366,7 @@ __all__ = [
     "quality_gate_conformance",
     "register_detector",
     "register_provider",
+    "registered_strategy",
     "reference_configuration_sha256",
     "reference_tokenize",
     "removal_result_schema",
@@ -294,6 +388,7 @@ __all__ = [
     "verify",
     "self_information",
     "surrogate_score",
+    "strategy_configuration_sha256",
 ]
 
 
@@ -378,6 +473,46 @@ class Dewatermark:
     ):
         """Verify a candidate using a named detector or explicitly abstain."""
         return verify_text(source_text, candidate_text, detector, config=self.config)
+
+    def localize(
+        self,
+        text: str,
+        detector: str | object,
+        *,
+        window_characters: int = 1200,
+        stride_characters: int = 600,
+        familywise_alpha: float = 0.01,
+    ) -> LocalizationReport:
+        """Locate detector evidence without retaining the text in the report."""
+        session = DetectorSession(detector, config=self.config)
+        return localize(
+            text,
+            session,
+            window_characters=window_characters,
+            stride_characters=stride_characters,
+            familywise_alpha=familywise_alpha,
+        )
+
+    def mitigate(
+        self,
+        text: str,
+        primary_detector: str | object,
+        strategies: Sequence[object | StrategyBinding],
+        *,
+        verifier_detectors: Sequence[str | object] = (),
+        limits: SearchLimits | None = None,
+        source_localization: Sequence[SignalSpan | LocalizedSignal] = (),
+    ) -> MitigationResult:
+        """Run bounded detector-guided search and roll back unless verified."""
+        return mitigate(
+            text,
+            primary_detector,
+            strategies,
+            verifier_detectors=verifier_detectors,
+            config=self.config,
+            limits=limits,
+            source_localization=source_localization,
+        )
 
     def remove(
         self,

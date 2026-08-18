@@ -39,6 +39,11 @@ reference-protocol` → `verify` → `replay --execute` conformance path.
 - A rewrite is accepted only after configured quality gates.
 - Treat every built-in and third-party transform result as an untrusted candidate;
   only the central assurance pipeline may commit it.
+- Detector-guided mitigation must return the exact source unless the primary
+  detector clears, every required quality gate passes, and a distinct
+  calibrated and independent held-out detector verifies the candidate.
+- Treat localized windows without corrected p-values as exploratory editing
+  hints, never as verified watermark evidence.
 - A legacy `success` status never establishes watermark removal. Use the
   additive detection, transformation, and verification states.
 - Capability discovery and planning must not import plugin code, access models,

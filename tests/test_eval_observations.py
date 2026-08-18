@@ -8,6 +8,8 @@ import pytest
 from evidence import reproduction_descriptor
 from jsonschema import Draft202012Validator
 from observations import (
+    MAX_BOOTSTRAP_REPLICATES,
+    MAX_BOOTSTRAP_SEED,
     ObservationValidationError,
     aggregate_observation_set,
     finalize_observation_set,
@@ -173,10 +175,32 @@ def _observation_set(sample_registry):
                 "id": identifier,
                 "role": role,
                 "manifest": {
+                    "id": identifier,
+                    "independent_requested": True,
                     "independent": True,
+                    "reproducible": True,
+                    "reproducibility_blockers": [],
+                    "command_identity": "public-shape-v1",
                     "implementation_version": "fixture-commit",
                     "configuration_sha256": _digest(identifier),
-                    "golden_conformance": {"passed": True},
+                    "sidecar_sha256": _digest(f"{identifier}-sidecar"),
+                    "command_sha256": _digest(f"{identifier}-command"),
+                    "implementation_sha256": _digest(f"{identifier}-implementation"),
+                    "model_sha256": _digest(f"{identifier}-model"),
+                    "tokenizer_sha256": _digest(f"{identifier}-tokenizer"),
+                    "source_sha256": _digest(f"{identifier}-source"),
+                    "executable_digests": [
+                        {
+                            "argument_index": 1,
+                            "basename": f"{identifier}.py",
+                            "sha256": _digest(f"{identifier}-script"),
+                        }
+                    ],
+                    "golden_conformance": {
+                        "passed": True,
+                        "vectors_sha256": _digest(f"{identifier}-vectors"),
+                        "report_sha256": _digest(f"{identifier}-report"),
+                    },
                 },
             }
         )
@@ -272,6 +296,180 @@ def test_observation_aggregation_is_fixed_fpr_cross_detector_and_denominator_saf
     assert aggregate["resource_telemetry"]["remote_queries"]["value"] == 0
 
 
+def test_observation_validator_rejects_credential_shaped_public_values():
+    registry = _sample_registry()
+    value = _observation_set(registry)
+    secret = "sk-live-PRIVATEDETECTORIDENTIFIER123456789"
+    value["detectors"][0]["id"] = secret
+    with pytest.raises(ObservationValidationError, match="private or credential-like") as captured:
+        value = finalize_observation_set(value)
+        validate_observation_set(value, registry)
+    assert secret not in str(captured.value)
+
+
+def test_aggregation_contract_rejects_ambiguous_group_delimiters():
+    registry = _sample_registry()
+    value = _observation_set(registry)
+    value["run_manifest"].update(
+        aggregation_contract_version="1.1",
+        bootstrap_replicates_count=10,
+        bootstrap_seed_count=0,
+    )
+    value["detectors"][0]["id"] = "primary::alias"
+    for row in value["observations"]:
+        if row["detector_id"] == "primary":
+            row["detector_id"] = "primary::alias"
+    value = finalize_observation_set(value)
+
+    with pytest.raises(ObservationValidationError, match="double-colon"):
+        validate_observation_set(value, registry)
+
+
+def test_attempt_history_counts_toward_bounded_bootstrap_work(monkeypatch):
+    registry = _sample_registry()
+    value = _observation_set(registry)
+    row = value["observations"][0]
+    failed_attempt = {
+        "state": "failed",
+        "error_class": "detector_adapter_failed",
+        "telemetry": {
+            "wall_time_seconds": 0.0,
+            "peak_rss_bytes": 0,
+            "remote_queries": None,
+            "generated_tokens": None,
+            "estimated_cost_usd": None,
+        },
+        "telemetry_complete": False,
+    }
+    terminal = {
+        "state": row["transformation_state"],
+        "error_class": row["error_class"],
+        "telemetry": row["telemetry"],
+        "telemetry_complete": True,
+    }
+    row["attempt_history"] = [
+        {"attempt_index": index + 1, **failed_attempt} for index in range(1_000)
+    ] + [{"attempt_index": 1_001, **terminal}]
+    value = finalize_observation_set(value)
+    monkeypatch.setattr(observations_module, "MAX_BOOTSTRAP_WORK_UNITS", 25_000)
+
+    with pytest.raises(ObservationValidationError, match="bootstrap workload"):
+        aggregate_observation_set(value, registry, bootstrap_replicates=2)
+
+
+@pytest.mark.parametrize(
+    ("bootstrap_replicates", "bootstrap_seed"),
+    (
+        (True, 0),
+        (1, 0),
+        (MAX_BOOTSTRAP_REPLICATES + 1, 0),
+        (2, True),
+        (2, -1),
+        (2, MAX_BOOTSTRAP_SEED + 1),
+    ),
+)
+def test_observation_aggregation_rejects_unbounded_or_non_exact_bootstrap_settings(
+    bootstrap_replicates,
+    bootstrap_seed,
+):
+    with pytest.raises(ObservationValidationError, match="bootstrap settings"):
+        aggregate_observation_set(
+            {},
+            {},
+            bootstrap_replicates=bootstrap_replicates,
+            bootstrap_seed=bootstrap_seed,
+        )
+
+
+def test_missing_positive_observation_remains_a_failed_attempt_in_denominator():
+    registry = _sample_registry()
+    value = _observation_set(registry)
+    value["observations"] = [
+        row
+        for row in value["observations"]
+        if not (row["sample_id"] == "final-000-positive" and row["detector_id"] == "primary")
+    ]
+    value = finalize_observation_set(value)
+    aggregate = aggregate_observation_set(
+        value, registry, bootstrap_replicates=20, bootstrap_seed=1
+    )
+    attempts = aggregate["groups"]["primary::sanitize-v1"]["attempt_outcomes"]
+    assert attempts["attempted_denominator"] == 100
+    assert attempts["failed"] == 1
+    assert aggregate["failure_classes"]["missing_required_observation"] == 1
+
+
+def test_lower_is_positive_detector_is_normalized_for_threshold_analysis():
+    registry = _sample_registry()
+    baseline = _observation_set(registry)
+    baseline_aggregate = aggregate_observation_set(
+        baseline, registry, bootstrap_replicates=20, bootstrap_seed=2
+    )
+    lower = _observation_set(registry)
+    for detector in lower["detectors"]:
+        if detector["id"] == "primary":
+            detector["manifest"]["score_direction"] = "lower"
+    for row in lower["observations"]:
+        if row["detector_id"] == "primary":
+            row["source_score"] *= -1
+            row["candidate_score"] *= -1
+    lower = finalize_observation_set(lower)
+    lower_aggregate = aggregate_observation_set(
+        lower, registry, bootstrap_replicates=20, bootstrap_seed=2
+    )
+    baseline_report = baseline_aggregate["groups"]["primary::sanitize-v1"]["fixed_fpr"]["0.01"]
+    lower_report = lower_aggregate["groups"]["primary::sanitize-v1"]["fixed_fpr"]["0.01"]
+    assert lower_report["tpr_before"] == baseline_report["tpr_before"]
+    assert lower_report["tpr_after"] == baseline_report["tpr_after"]
+    assert (
+        lower_aggregate["groups"]["primary::sanitize-v1"]["strata"]
+        == baseline_aggregate["groups"]["primary::sanitize-v1"]["strata"]
+    )
+
+
+def test_retry_history_keeps_failures_and_resources_in_all_attempt_denominator():
+    registry = _sample_registry()
+    value = _observation_set(registry)
+    row = next(
+        item
+        for item in value["observations"]
+        if item["sample_id"] == "final-000-positive" and item["detector_id"] == "primary"
+    )
+    terminal = {
+        "attempt_index": 2,
+        "state": row["transformation_state"],
+        "error_class": row["error_class"],
+        "telemetry": row["telemetry"],
+        "telemetry_complete": True,
+    }
+    row["attempt_history"] = [
+        {
+            "attempt_index": 1,
+            "state": "failed",
+            "error_class": "detector_adapter_failed",
+            "telemetry": {
+                "wall_time_seconds": 0.02,
+                "peak_rss_bytes": 2048,
+                "remote_queries": None,
+                "generated_tokens": None,
+                "estimated_cost_usd": None,
+            },
+            "telemetry_complete": False,
+        },
+        terminal,
+    ]
+    value = finalize_observation_set(value)
+    aggregate = aggregate_observation_set(
+        value, registry, bootstrap_replicates=20, bootstrap_seed=5
+    )
+    attempts = aggregate["groups"]["primary::sanitize-v1"]["attempt_outcomes"]
+    assert attempts["attempted_denominator"] == 101
+    assert attempts["failed"] == 1
+    assert aggregate["groups"]["primary::sanitize-v1"]["strata"][0]["attempted"] == 101
+    assert aggregate["failure_classes"]["detector_adapter_failed"] == 1
+    assert aggregate["resource_telemetry"]["remote_queries"]["state"] == "not_available"
+
+
 def test_observation_identity_and_effective_length_fail_closed():
     registry = _sample_registry()
     observations = _observation_set(registry)
@@ -286,7 +484,7 @@ def test_observation_identity_and_effective_length_fail_closed():
         validate_observation_set(observations, registry)
 
 
-def test_failed_observation_requires_redacted_error_class_and_null_gates():
+def test_legacy_failed_observation_accepts_public_extension_error_class():
     registry = _sample_registry()
     observations = _observation_set(registry)
     row = observations["observations"][-1]
@@ -301,6 +499,58 @@ def test_failed_observation_requires_redacted_error_class_and_null_gates():
     aggregate = aggregate_observation_set(observations, registry, bootstrap_replicates=10)
     assert aggregate["failure_classes"]["TimeoutError"] == 1
     assert json.dumps(aggregate).find("private") == -1
+
+
+def test_strict_aggregation_rejects_unregistered_observation_error_class():
+    registry = _sample_registry()
+    observations = _observation_set(registry)
+    observations["run_manifest"].update(
+        aggregation_contract_version="1.1",
+        bootstrap_replicates_count=10,
+        bootstrap_seed_count=0,
+    )
+    row = observations["observations"][-1]
+    row.update(
+        transformation_state="failed",
+        quality_gate_passed=None,
+        task_check_passed=None,
+        error_class="TimeoutError",
+    )
+    observations = finalize_observation_set(observations)
+
+    with pytest.raises(ObservationValidationError, match="registered host code"):
+        validate_observation_set(observations, registry)
+
+
+def test_strict_aggregation_rejects_unregistered_attempt_error_class():
+    registry = _sample_registry()
+    observations = _observation_set(registry)
+    observations["run_manifest"].update(
+        aggregation_contract_version="1.1",
+        bootstrap_replicates_count=10,
+        bootstrap_seed_count=0,
+    )
+    row = observations["observations"][-1]
+    row["attempt_history"] = [
+        {
+            "attempt_index": 1,
+            "state": "failed",
+            "error_class": "TimeoutError",
+            "telemetry": row["telemetry"],
+            "telemetry_complete": True,
+        },
+        {
+            "attempt_index": 2,
+            "state": row["transformation_state"],
+            "error_class": row["error_class"],
+            "telemetry": row["telemetry"],
+            "telemetry_complete": True,
+        },
+    ]
+    observations = finalize_observation_set(observations)
+
+    with pytest.raises(ObservationValidationError, match="registered host code"):
+        validate_observation_set(observations, registry)
 
 
 def test_observation_serializer_rejects_hook_bearing_mapping_without_reflecting_it():

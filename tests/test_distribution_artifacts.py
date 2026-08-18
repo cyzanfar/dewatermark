@@ -18,13 +18,20 @@ SKILL_FILES = {
     "agents/openai.yaml",
 }
 SCHEMA_FILES = {
+    "benchmark-comparator-registry-v1.json",
     "benchmark-evidence-bundle-v1.json",
+    "benchmark-input-corpus-v1.json",
     "benchmark-observation-set-v1.json",
+    "benchmark-protocol-manifest-v1.json",
     "benchmark-replication-record-v1.json",
+    "benchmark-run-config-v1.json",
     "benchmark-sample-registry-v1.json",
     "command-detector-protocol-v1.json",
+    "command-strategy-protocol-v1.json",
     "detector-capability-v1.json",
     "evidence-receipt-v1.json",
+    "localization-result-v1.json",
+    "mitigation-result-v1.json",
     "openapi-v1.json",
     "removal-result-v1.json",
 }
@@ -34,9 +41,36 @@ ADAPTER_PACK_FILES = {
     "kgw/capability.json",
     "kgw/conformance.py",
     "kgw/fixture-cases.json",
+    "kgw/build_natural_profile.py",
+    "kgw/green-transitions-v1.json",
+    "kgw/natural-adapter-config.json",
+    "kgw/natural-capability.json",
+    "kgw/natural-conformance-record.json",
+    "kgw/natural-fixture-cases.json",
+    "kgw/natural-profile-material.json",
+    "kgw/natural-threshold-evidence.json",
+    "kgw/natural-tokenizer.json",
+    "kgw/natural_adapter.py",
+    "kgw/natural_conformance.py",
+    "kgw/operator_adapter.py",
     "kgw/README.md",
+    "kgw/seal_operator.py",
     "synthid/adapter-manifest.template.json",
     "synthid/README.md",
+    "unigram/README.md",
+    "unigram/build_natural_profile.py",
+    "unigram/green-mask-v1.json",
+    "unigram/natural-adapter-config.json",
+    "unigram/natural-capability.json",
+    "unigram/natural-conformance-record.json",
+    "unigram/natural-fixture-cases.json",
+    "unigram/natural-profile-material.json",
+    "unigram/natural-threshold-evidence.json",
+    "unigram/natural-tokenizer.json",
+    "unigram/natural_adapter.py",
+    "unigram/natural_conformance.py",
+    "unigram/operator_adapter.py",
+    "unigram/seal_operator.py",
 }
 FORBIDDEN_PARTS = {
     ".DS_Store",
@@ -91,6 +125,8 @@ def test_wheel_contains_agent_skill_and_declared_extras() -> None:
             name.removeprefix(adapter_prefix) for name in names if name.startswith(adapter_prefix)
         }
         assert ADAPTER_PACK_FILES <= packaged_adapters
+        assert "dewatermark_eval/PROTOCOL_RUN.md" in names
+        assert "dewatermark_eval/requirements.txt" in names
         assert "dewatermark/data/reference-detector-vectors-v1.json" in names
         assert "dewatermark/py.typed" in names
         metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
@@ -122,3 +158,5 @@ def test_sdist_contains_agent_skill_and_security_policy() -> None:
     }
     assert SKILL_FILES <= packaged
     assert any(name.endswith("/SECURITY.md") for name in names)
+    assert any(name.endswith("/eval/PROTOCOL_RUN.md") for name in names)
+    assert any(name.endswith("/eval/requirements.txt") for name in names)

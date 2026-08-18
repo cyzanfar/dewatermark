@@ -124,6 +124,25 @@ def test_static_state_fingerprint_is_stable_and_one_way_across_processes():
     assert private_value not in first
 
 
+def test_static_state_fingerprint_rejects_credential_derived_public_identity():
+    credential = "pin-0001"
+
+    class Gate:
+        capability = CapabilityManifest(
+            identifier="credential-state-gate",
+            kind="quality_gate",
+        )
+
+        def __init__(self):
+            self.settings = {"api_key": credential}
+
+    with pytest.raises(dewatermark.ConfigurationError) as caught:
+        extension_safety.static_state_sha256(Gate())
+
+    assert "operator-managed" in str(caught.value)
+    assert credential not in str(caught.value)
+
+
 def test_plan_rejects_custom_option_mapping_without_invoking_hooks():
     invoked: list[str] = []
 

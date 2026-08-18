@@ -23,6 +23,11 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Optional, Sequence, cast
 
 from .bounded_process import BoundedProcessFailure, run_bounded_process
+from .command_safety import (
+    command_code_identity_sha256,
+    validate_public_command,
+    validate_public_json,
+)
 from .config import DewatermarkConfig, resolve
 from .exceptions import AdapterError
 from .models import CapabilityManifest, DetectionEvidence, DetectionStatus
@@ -33,15 +38,18 @@ from .request_context import (
     request_scope,
 )
 
-COMMAND_DETECTOR_PROTOCOL_VERSION = "1.0"
+COMMAND_DETECTOR_PROTOCOL_VERSION = "1.1"
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_STDOUT_BYTES = 64 * 1024
 DEFAULT_MAX_STDERR_BYTES = 16 * 1024
 _MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 
 ScoreDirection = Literal["higher", "lower"]
+ThresholdOperator = Literal[">", ">=", "<", "<="]
+SecretBinding = Literal["operator_managed_file"]
 _PROTOCOL_RE = re.compile(r"^[0-9]+\.[0-9]+$")
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_LOWERCASE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _REASON_CODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _ALLOWED_STATUSES: tuple[DetectionStatus, ...] = (
     "detected",
@@ -51,15 +59,29 @@ _ALLOWED_STATUSES: tuple[DetectionStatus, ...] = (
     "configuration_mismatch",
     "detector_error",
 )
-_SENSITIVE_KEYS = {
-    "api_key",
-    "authorization",
-    "credential",
-    "password",
-    "private_key",
-    "secret",
-    "token",
-}
+_COMMAND_METADATA_FIELDS = frozenset(
+    {
+        "command_protocol_version",
+        "configuration_sha256",
+        "implementation_sha256",
+        "minimum_effective_tokens",
+        "score_direction",
+        "secret_binding",
+        "threshold",
+        "threshold_operator",
+        "watermark_target_sha256",
+    }
+)
+_PUBLIC_COMMITMENT_FIELDS = frozenset(
+    {
+        "implementation_sha256",
+        "profile_manifest_sha256",
+        "source_file_sha256",
+        "threshold_evidence_sha256",
+        "tokenizer_sha256",
+        "tokenizer_snapshot_sha256",
+    }
+)
 
 # A command adapter is an isolation boundary for process credentials, even
 # though the selected executable itself remains trusted.  In particular, do
@@ -86,45 +108,29 @@ class CommandDetectorConformanceError(CommandDetectorError):
     """One or more named golden vectors failed without reflecting their text."""
 
 
-def _is_sensitive_key(key: str) -> bool:
-    normalized = key.lower().replace("-", "_")
-    return normalized in _SENSITIVE_KEYS or normalized.endswith(
-        ("_api_key", "_credential", "_password", "_private_key", "_secret", "_token")
-    )
-
-
 def _public_json_value(value: Any, *, path: str = "configuration") -> Any:
     """Validate JSON configuration while refusing credential-like fields."""
-    if value is None or isinstance(value, (str, bool, int)):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise ValueError(f"{path} contains a non-finite number")
-        return value
-    if isinstance(value, Mapping):
-        result: dict[str, Any] = {}
-        for raw_key, item in value.items():
-            if not isinstance(raw_key, str):
-                raise TypeError(f"{path} keys must be strings")
-            if _is_sensitive_key(raw_key):
-                raise ValueError(
-                    f"{path} must contain public identifiers or fingerprints, not credentials"
-                )
-            # Do not reflect an arbitrary configuration key through a nested
-            # validation error. Key names may themselves contain credentials.
-            result[raw_key] = _public_json_value(item, path="configuration value")
-        return result
-    if isinstance(value, (list, tuple)):
-        return [_public_json_value(item, path=path) for item in value]
-    raise TypeError(f"{path} must contain only JSON values")
+    return validate_public_json(value, source=path)
+
+
+def _public_metadata(value: Any, *, path: str) -> dict[str, Any]:
+    if type(value) is not dict:
+        raise TypeError(f"{path} must be a literal dictionary")
+    commitments = {key: value[key] for key in _PUBLIC_COMMITMENT_FIELDS if key in value}
+    for key, digest in commitments.items():
+        if type(digest) is not str or _LOWERCASE_SHA256_RE.fullmatch(digest) is None:
+            raise ValueError(f"{path} {key} must be a lowercase SHA-256 digest")
+    remaining = {key: item for key, item in value.items() if key not in commitments}
+    public = validate_public_json(remaining, source=path)
+    return cast(dict[str, Any], {**public, **commitments})
 
 
 def detector_configuration_sha256(configuration: Mapping[str, Any]) -> str:
     """Fingerprint public detector configuration without accepting secrets.
 
-    Key material must already be represented by a one-way public key
-    fingerprint.  Passing a field named like a credential is rejected so a raw
-    credential cannot accidentally become a brute-forceable published digest.
+    Key material must be represented only by an opaque, non-derived public key
+    identifier. Passing a field named like a credential is rejected so raw
+    credential material cannot accidentally become a brute-forceable digest.
     """
     public = _public_json_value(configuration)
     encoded = json.dumps(public, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
@@ -156,10 +162,38 @@ def _protocol_major(value: Any, *, source: str) -> int:
     return int(value.split(".", 1)[0])
 
 
+def _protocol_minor(value: Any, *, source: str) -> int:
+    _protocol_major(value, source=source)
+    assert isinstance(value, str)
+    return int(value.split(".", 1)[1])
+
+
 def _validate_fingerprint(value: Any, *, source: str) -> str:
     if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
         raise CommandDetectorContractError(f"{source} configuration_sha256 is invalid")
     return value.lower()
+
+
+def _validate_threshold_operator(
+    value: Any, *, score_direction: ScoreDirection, source: str
+) -> ThresholdOperator:
+    allowed = (">", ">=") if score_direction == "higher" else ("<", "<=")
+    if value not in allowed:
+        expected = " or ".join(repr(item) for item in allowed)
+        raise CommandDetectorContractError(
+            f"{source} threshold_operator must be {expected} for {score_direction} scores"
+        )
+    return cast(ThresholdOperator, value)
+
+
+def _threshold_met(score: float, threshold: float, operator: ThresholdOperator) -> bool:
+    if operator == ">":
+        return score > threshold
+    if operator == ">=":
+        return score >= threshold
+    if operator == "<":
+        return score < threshold
+    return score <= threshold
 
 
 def command_detector_manifest(
@@ -167,14 +201,18 @@ def command_detector_manifest(
     identifier: str,
     schemes: Sequence[str],
     configuration_sha256: str,
+    implementation_sha256: Optional[str] = None,
     threshold: float,
     score_direction: ScoreDirection = "higher",
+    threshold_operator: Optional[ThresholdOperator] = None,
     minimum_effective_tokens: int = 0,
     version: str = "1",
     description: str = "External detector using the bounded JSON command protocol.",
     network_required: bool = False,
     model_download_possible: bool = False,
     requires_secret: bool = False,
+    secret_binding: Optional[SecretBinding] = None,
+    watermark_target_sha256: Optional[str] = None,
     minimum_characters: int = 0,
     calibrated: bool = False,
     independent: bool = False,
@@ -194,6 +232,13 @@ def command_detector_manifest(
     declared_threshold = _finite_number(threshold, "manifest threshold")
     if score_direction not in ("higher", "lower"):
         raise ValueError("score_direction must be 'higher' or 'lower'")
+    if threshold_operator is None:
+        threshold_operator = ">=" if score_direction == "higher" else "<="
+    declared_operator = _validate_threshold_operator(
+        threshold_operator,
+        score_direction=score_direction,
+        source="manifest",
+    )
     if (
         isinstance(minimum_effective_tokens, bool)
         or not isinstance(minimum_effective_tokens, int)
@@ -204,14 +249,46 @@ def command_detector_manifest(
         raise TypeError("minimum_characters must be an integer")
     if minimum_characters < 0:
         raise ValueError("minimum_characters must be non-negative")
-    public_metadata = cast(dict[str, Any], _public_json_value(metadata or {}, path="metadata"))
+    if secret_binding not in (None, "operator_managed_file"):
+        raise ValueError("secret_binding must be 'operator_managed_file' when supplied")
+    if secret_binding is not None and not requires_secret:
+        raise ValueError("secret_binding requires requires_secret=True")
+    public_metadata = _public_metadata(metadata or {}, path="metadata")
+    metadata_implementation = public_metadata.pop("implementation_sha256", None)
+    if implementation_sha256 is not None and metadata_implementation is not None:
+        if implementation_sha256 != metadata_implementation:
+            raise ValueError("implementation_sha256 declarations do not match")
+    implementation = (
+        implementation_sha256 if implementation_sha256 is not None else metadata_implementation
+    )
+    if implementation is not None and (
+        not isinstance(implementation, str)
+        or _LOWERCASE_SHA256_RE.fullmatch(implementation) is None
+    ):
+        raise ValueError("implementation_sha256 must be a lowercase SHA-256 digest")
+    metadata_target = public_metadata.pop("watermark_target_sha256", None)
+    if watermark_target_sha256 is not None and metadata_target is not None:
+        if watermark_target_sha256 != metadata_target:
+            raise ValueError("watermark_target_sha256 declarations do not match")
+    target = watermark_target_sha256 if watermark_target_sha256 is not None else metadata_target
+    if target is not None and (
+        not isinstance(target, str) or _LOWERCASE_SHA256_RE.fullmatch(target) is None
+    ):
+        raise ValueError("watermark_target_sha256 must be a lowercase SHA-256 digest")
     reserved = {
         "command_protocol_version": COMMAND_DETECTOR_PROTOCOL_VERSION,
         "configuration_sha256": fingerprint,
         "threshold": declared_threshold,
         "score_direction": score_direction,
+        "threshold_operator": declared_operator,
         "minimum_effective_tokens": minimum_effective_tokens,
     }
+    if implementation is not None:
+        reserved["implementation_sha256"] = implementation
+    if secret_binding is not None:
+        reserved["secret_binding"] = secret_binding
+    if target is not None:
+        reserved["watermark_target_sha256"] = target
     conflicts = set(public_metadata).intersection(reserved)
     if conflicts:
         raise ValueError("metadata cannot override command-detector contract fields")
@@ -232,14 +309,7 @@ def command_detector_manifest(
 
 
 def _validate_command(command: tuple[str, ...]) -> tuple[str, ...]:
-    if not isinstance(command, tuple):
-        raise TypeError("command must be an immutable tuple of argv strings")
-    if not command:
-        raise ValueError("command argv cannot be empty")
-    for argument in command:
-        if not isinstance(argument, str) or not argument or "\x00" in argument:
-            raise ValueError("command argv must contain non-empty strings without NUL bytes")
-    return command
+    return validate_public_command(command)
 
 
 def _command_environment() -> dict[str, str]:
@@ -259,6 +329,11 @@ class _DetectorContract:
     configuration_sha256: str
     threshold: float
     score_direction: ScoreDirection
+    threshold_operator: ThresholdOperator
+    threshold_operator_explicit: bool
+    secret_binding: Optional[SecretBinding]
+    implementation_sha256: Optional[str]
+    watermark_target_sha256: Optional[str]
     minimum_effective_tokens: int
 
 
@@ -272,17 +347,36 @@ def _contract_from_manifest(capability: CapabilityManifest) -> _DetectorContract
     if len(set(capability.schemes)) != len(capability.schemes):
         raise ValueError("detector capability schemes must be unique")
     metadata = capability.metadata
-    _public_json_value(metadata, path="capability.metadata")
+    if type(metadata) is not dict:
+        raise TypeError("capability.metadata must be a literal dictionary")
+    non_contract_metadata = {
+        key: value for key, value in metadata.items() if key not in _COMMAND_METADATA_FIELDS
+    }
+    _public_metadata(non_contract_metadata, path="capability.metadata")
     version = metadata.get("command_protocol_version")
     if _protocol_major(version, source="manifest") != _protocol_major(
         COMMAND_DETECTOR_PROTOCOL_VERSION, source="runtime"
     ):
         raise CommandDetectorContractError("manifest uses an incompatible command protocol")
+    modern_contract = _protocol_minor(version, source="manifest") >= 1
     fingerprint = _validate_fingerprint(metadata.get("configuration_sha256"), source="manifest")
     threshold = _finite_number(metadata.get("threshold"), "manifest threshold")
     direction = metadata.get("score_direction")
     if direction not in ("higher", "lower"):
         raise CommandDetectorContractError("manifest score_direction must be 'higher' or 'lower'")
+    raw_operator = metadata.get("threshold_operator") if modern_contract else None
+    operator_explicit = modern_contract
+    if raw_operator is None:
+        if modern_contract:
+            raise CommandDetectorContractError(
+                "manifest threshold_operator is required by command protocol 1.1"
+            )
+        raw_operator = ">=" if direction == "higher" else "<="
+    operator = _validate_threshold_operator(
+        raw_operator,
+        score_direction=cast(ScoreDirection, direction),
+        source="manifest",
+    )
     minimum_tokens = metadata.get("minimum_effective_tokens")
     if (
         isinstance(minimum_tokens, bool)
@@ -292,11 +386,36 @@ def _contract_from_manifest(capability: CapabilityManifest) -> _DetectorContract
         raise CommandDetectorContractError(
             "manifest minimum_effective_tokens must be a non-negative integer"
         )
+    raw_secret_binding = metadata.get("secret_binding") if modern_contract else None
+    if raw_secret_binding not in (None, "operator_managed_file"):
+        raise CommandDetectorContractError("manifest secret_binding is unsupported")
+    if raw_secret_binding is not None and not capability.requires_secret:
+        raise CommandDetectorContractError("manifest secret_binding requires requires_secret=true")
+    target = metadata.get("watermark_target_sha256") if modern_contract else None
+    if target is not None and (
+        not isinstance(target, str) or _LOWERCASE_SHA256_RE.fullmatch(target) is None
+    ):
+        raise CommandDetectorContractError(
+            "manifest watermark_target_sha256 must be a lowercase SHA-256 digest"
+        )
+    implementation = metadata.get("implementation_sha256") if modern_contract else None
+    if implementation is not None and (
+        not isinstance(implementation, str)
+        or _LOWERCASE_SHA256_RE.fullmatch(implementation) is None
+    ):
+        raise CommandDetectorContractError(
+            "manifest implementation_sha256 must be a lowercase SHA-256 digest"
+        )
     return _DetectorContract(
         protocol_version=cast(str, version),
         configuration_sha256=fingerprint,
         threshold=threshold,
         score_direction=cast(ScoreDirection, direction),
+        threshold_operator=operator,
+        threshold_operator_explicit=operator_explicit,
+        secret_binding=cast(Optional[SecretBinding], raw_secret_binding),
+        implementation_sha256=implementation,
+        watermark_target_sha256=target,
         minimum_effective_tokens=minimum_tokens,
     )
 
@@ -433,6 +552,10 @@ class CommandDetector:
             return os.path.isfile(executable) and os.access(executable, os.X_OK)
         return shutil.which(executable) is not None
 
+    def _verification_code_sha256(self) -> Optional[str]:
+        """Return the current bounded executable/script identity for assurance."""
+        return command_code_identity_sha256(self._command)
+
     def _static_evidence(
         self, text: str, status: DetectionStatus, reason: str
     ) -> DetectionEvidence:
@@ -448,23 +571,33 @@ class CommandDetector:
                 "configuration_sha256": self._contract.configuration_sha256,
                 "effective_tokens": 0,
                 "score_direction": self._contract.score_direction,
+                "threshold_operator": self._contract.threshold_operator,
             },
         )
 
-    def _preflight(self, text: str) -> Optional[DetectionEvidence]:
-        if self.capability.network_required and not self._config.allow_remote_processing:
+    def _preflight(
+        self,
+        text: str,
+        *,
+        allow_network: bool,
+        allow_model_download: bool,
+    ) -> Optional[DetectionEvidence]:
+        if self.capability.network_required and not allow_network:
             return self._static_evidence(
                 text,
                 "configuration_mismatch",
                 "detector requires explicit remote-processing consent",
             )
-        if self.capability.model_download_possible and not self._config.allow_model_download:
+        if self.capability.model_download_possible and not allow_model_download:
             return self._static_evidence(
                 text,
                 "configuration_mismatch",
                 "detector requires explicit model-download consent",
             )
-        if self.capability.requires_secret:
+        if (
+            self.capability.requires_secret
+            and self._contract.secret_binding != "operator_managed_file"
+        ):
             return self._static_evidence(
                 text,
                 "configuration_mismatch",
@@ -491,13 +624,19 @@ class CommandDetector:
     def detect(self, text: str) -> DetectionEvidence:
         if not isinstance(text, str):
             raise TypeError("command detector text must be a string")
-        preflight = self._preflight(text)
-        if preflight is not None:
-            return preflight
         context = current_request_context()
         if context is None:
             with request_scope(RequestContext.from_config(self._config)):
                 return self.detect(text)
+        allow_network = self._config.allow_remote_processing and context.allow_remote_processing
+        allow_model_download = self._config.allow_model_download and context.allow_model_download
+        preflight = self._preflight(
+            text,
+            allow_network=allow_network,
+            allow_model_download=allow_model_download,
+        )
+        if preflight is not None:
+            return preflight
         timeout = min(self._timeout_seconds, float(self._config.request_timeout))
         timeout = context.remaining_seconds(timeout)
         accounting = extension_resource_accounting(self.capability)
@@ -514,16 +653,16 @@ class CommandDetector:
             context.record_model_access(
                 self.capability.identifier,
                 cached=not self.capability.model_download_possible,
-                download_allowed=self._config.allow_model_download,
+                download_allowed=allow_model_download,
             )
         request = {
-            "protocol_version": COMMAND_DETECTOR_PROTOCOL_VERSION,
+            "protocol_version": self._contract.protocol_version,
             "action": "detect",
             "detector": self.capability.identifier,
             "configuration_sha256": self._contract.configuration_sha256,
             "policy": {
-                "allow_network": self._config.allow_remote_processing,
-                "allow_model_download": self._config.allow_model_download,
+                "allow_network": allow_network,
+                "allow_model_download": allow_model_download,
             },
             "text": text,
         }
@@ -537,7 +676,9 @@ class CommandDetector:
             max_stdout_bytes=self._max_stdout_bytes,
             max_stderr_bytes=self._max_stderr_bytes,
         )
-        return self._normalize_response(_decode_response(output), text)
+        evidence = self._normalize_response(_decode_response(output), text)
+        context.checkpoint()
+        return evidence
 
     def _normalize_response(self, response: Mapping[str, Any], text: str) -> DetectionEvidence:
         response_version = response.get("protocol_version")
@@ -546,6 +687,13 @@ class CommandDetector:
         ):
             raise CommandDetectorContractError(
                 "command detector returned an incompatible protocol version"
+            )
+        if (
+            self._contract.threshold_operator_explicit
+            and _protocol_minor(response_version, source="response") < 1
+        ):
+            raise CommandDetectorContractError(
+                "command detector response does not support the bound decision contract"
             )
         if response.get("action") != "detect.result":
             raise CommandDetectorContractError(
@@ -575,6 +723,22 @@ class CommandDetector:
             raise CommandDetectorContractError(
                 "detector response score_direction must be 'higher' or 'lower'"
             )
+        raw_operator = (
+            response.get("threshold_operator")
+            if self._contract.threshold_operator_explicit
+            else self._contract.threshold_operator
+        )
+        if raw_operator is None:
+            if self._contract.threshold_operator_explicit:
+                raise CommandDetectorContractError(
+                    "detector response threshold_operator is required by its static manifest"
+                )
+            raw_operator = self._contract.threshold_operator
+        operator = _validate_threshold_operator(
+            raw_operator,
+            score_direction=cast(ScoreDirection, direction),
+            source="response",
+        )
         raw_score = response.get("score")
         score = _finite_number(raw_score, "score") if raw_score is not None else None
         threshold = _finite_number(response.get("threshold"), "threshold")
@@ -587,6 +751,8 @@ class CommandDetector:
             mismatch_fields.append("configuration_sha256")
         if direction != self._contract.score_direction:
             mismatch_fields.append("score_direction")
+        if operator != self._contract.threshold_operator:
+            mismatch_fields.append("threshold_operator")
         if threshold != self._contract.threshold:
             mismatch_fields.append("threshold")
         details: dict[str, Any] = {
@@ -594,14 +760,15 @@ class CommandDetector:
             "configuration_sha256": self._contract.configuration_sha256,
             "effective_tokens": effective_tokens,
             "score_direction": self._contract.score_direction,
+            "threshold_operator": self._contract.threshold_operator,
         }
         reason_code = response.get("reason_code")
         reason: Optional[str] = None
         if reason_code is not None:
             if not isinstance(reason_code, str) or not _REASON_CODE_RE.fullmatch(reason_code):
                 raise CommandDetectorContractError("detector response reason_code is invalid")
-            details["reason_code"] = reason_code
-            reason = f"command detector reported reason code {reason_code}"
+            details["reason_code"] = "detector_reported_reason"
+            reason = "command detector reported a reason code"
         for optional_numeric in ("p_value", "z_score"):
             if optional_numeric in response:
                 value = _finite_number(response[optional_numeric], optional_numeric)
@@ -624,10 +791,10 @@ class CommandDetector:
             )
         if status in ("detected", "not_detected"):
             assert score is not None
-            positive = (
-                score >= self._contract.threshold
-                if self._contract.score_direction == "higher"
-                else score <= self._contract.threshold
+            positive = _threshold_met(
+                score,
+                self._contract.threshold,
+                self._contract.threshold_operator,
             )
             if (status == "detected") != positive:
                 raise CommandDetectorContractError(
@@ -846,6 +1013,8 @@ __all__ = [
     "DetectorConformanceCase",
     "DetectorConformanceReport",
     "DetectorGoldenVector",
+    "SecretBinding",
+    "ThresholdOperator",
     "assert_command_detector_conformance",
     "command_detector_manifest",
     "detector_configuration_sha256",

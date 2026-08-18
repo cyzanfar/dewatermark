@@ -1,4 +1,5 @@
 import copy
+import hashlib
 
 from jsonschema import Draft202012Validator
 
@@ -29,10 +30,166 @@ def test_packaged_openapi_document_matches_server_contract():
     assert dewatermark.public_schema("openapi") == openapi_schema()
 
 
+def test_all_benchmark_execution_schemas_are_packaged_and_valid():
+    functions = {
+        "benchmark-comparator-registry": dewatermark.benchmark_comparator_registry_schema,
+        "benchmark-protocol-manifest": dewatermark.benchmark_protocol_manifest_schema,
+        "benchmark-run-config": dewatermark.benchmark_run_config_schema,
+        "benchmark-input-corpus": dewatermark.benchmark_input_corpus_schema,
+    }
+    for name, function in functions.items():
+        schema = function()
+        Draft202012Validator.check_schema(schema)
+        assert schema == dewatermark.public_schema(name)
+
+
 def test_builtin_detector_capability_validates_against_public_schema():
     capability = dewatermark.detector_manifest("unicode")
     assert capability is not None
     _validate(dewatermark.detector_capability_schema(), capability.to_dict())
+
+
+def test_localization_and_mitigation_results_validate_against_public_schemas():
+    class Detector:
+        def __init__(self, identifier):
+            self.capability = dewatermark.CapabilityManifest(
+                identifier=identifier,
+                kind="detector",
+                schemes=("schema-fixture",),
+                calibrated=True,
+                independent=True,
+                metadata={
+                    "configuration_sha256": hashlib.sha256(identifier.encode()).hexdigest(),
+                    "resource_accounting": "none",
+                    "score_direction": "higher",
+                    "threshold": 2.0,
+                    "threshold_operator": ">=",
+                    "watermark_target_sha256": "c" * 64,
+                },
+            )
+
+        def available(self):
+            return True
+
+        def detect(self, text):
+            score = float(text.count("blue"))
+            return {
+                "scheme": "schema-fixture",
+                "status": "detected" if score >= 2 else "not_detected",
+                "score": score,
+                "threshold": 2.0,
+                "score_direction": "higher",
+                "threshold_operator": ">=",
+                "configuration_sha256": self.capability.metadata["configuration_sha256"],
+                "p_value": 0.001 if score >= 2 else 0.8,
+            }
+
+    class Strategy:
+        capability = dewatermark.CapabilityManifest(
+            identifier="schema-strategy",
+            kind="transformer",
+            metadata={"resource_accounting": "none"},
+        )
+
+        def available(self):
+            return True
+
+        def generate(self, text, *, context, **_options):
+            return [text.replace("blue", "teal", 2)]
+
+    class Verifier(Detector):
+        def detect(self, text):
+            return super().detect(text)
+
+    source = "alpha blue beta blue gamma blue delta epsilon zeta eta theta"
+    primary = Detector("schema-primary")
+    verifier = Verifier("schema-verifier")
+    localization = dewatermark.localize(
+        source,
+        dewatermark.DetectorSession(primary, max_queries=8),
+        window_characters=48,
+        stride_characters=24,
+    )
+    mitigation = dewatermark.mitigate(
+        source,
+        primary,
+        [Strategy()],
+        verifier_detectors=[verifier],
+    )
+
+    localized = localization.to_dict()
+    _validate(dewatermark.localization_result_schema(), localized)
+    impossible_localization = copy.deepcopy(localized)
+    impossible_localization["status"] = "localized"
+    impossible_localization["spans"] = []
+    assert not Draft202012Validator(dewatermark.localization_result_schema()).is_valid(
+        impossible_localization
+    )
+    serialized = mitigation.to_dict()
+    _validate(dewatermark.mitigation_result_schema(), serialized)
+
+    missing_text = copy.deepcopy(serialized)
+    missing_text.pop("cleaned_text")
+    assert list(
+        Draft202012Validator(dewatermark.mitigation_result_schema()).iter_errors(missing_text)
+    )
+
+    impossible = copy.deepcopy(serialized)
+    impossible["changed"] = False
+    assert list(
+        Draft202012Validator(dewatermark.mitigation_result_schema()).iter_errors(impossible)
+    )
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["verification"]["verifiers"] = []
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["verification"]["primary_after"]["evidence"]["status"] = "detected"
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["primary_before"].pop("policy_sha256")
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["verification"]["primary_before"]["role"] = "verifier"
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["verification"]["verifiers"][0]["verification"].pop("before")
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["quality"]["passed"] = False
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["status"] = "rolled_back"
+    forged["reason_code"] = "verification_inconclusive"
+    forged["changed"] = False
+    forged["cleaned_text"] = source
+    forged["receipt"]["status"] = "rolled_back"
+    forged["receipt"]["reason_code"] = "verification_inconclusive"
+    forged["receipt"]["changed"] = False
+    forged["receipt"]["output_sha256"] = forged["receipt"]["input_sha256"]
+    forged["receipt"]["edit_characters"] = 0
+    forged["receipt"]["edit_fraction"] = 0
+    forged["receipt"].pop("selected_strategy")
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["reason_code"] = "held_out_residual"
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    forged = copy.deepcopy(serialized)
+    forged["receipt"]["selected_strategy"] = ""
+    assert not Draft202012Validator(dewatermark.mitigation_result_schema()).is_valid(forged)
+
+    openapi_receipt = openapi_schema()["components"]["schemas"]["MitigationResponse"]["properties"][
+        "receipt"
+    ]
+    assert "$ref" in openapi_receipt
 
 
 def test_command_detector_request_and_response_validate_against_protocol_schema():
@@ -47,7 +204,7 @@ def test_command_detector_request_and_response_validate_against_protocol_schema(
         "text": "private text",
     }
     response = {
-        "protocol_version": "1.0",
+        "protocol_version": "1.1",
         "action": "detect.result",
         "detector": "fixture",
         "scheme": "fixture-v1",
@@ -55,11 +212,103 @@ def test_command_detector_request_and_response_validate_against_protocol_schema(
         "score": 0.1,
         "threshold": 1.0,
         "score_direction": "higher",
+        "threshold_operator": ">=",
         "effective_tokens": 20,
         "configuration_sha256": configuration,
     }
     _validate(schema, request)
     _validate(schema, response)
+
+    unknown = {**response, "private_debug": "not part of the protocol"}
+    _validate(schema, unknown)
+    legacy = {key: value for key, value in response.items() if key != "threshold_operator"}
+    legacy["protocol_version"] = "1.0"
+    legacy["legacy_extension"] = {"adapter": "v0.6-compatible"}
+    _validate(schema, legacy)
+    for legacy_operator in (42, "<"):
+        _validate(schema, {**legacy, "threshold_operator": legacy_operator})
+    wrong_edge = {**response, "threshold_operator": "<"}
+    assert not Draft202012Validator(schema).is_valid(wrong_edge)
+
+
+def test_v1_detector_capability_remains_compatible_with_pre_07_manifests():
+    base = {
+        "identifier": "legacy-independent-detector",
+        "kind": "detector",
+        "version": "1",
+        "schemes": ["legacy-scheme"],
+        "description": "v0.6-compatible detector capability",
+        "network_required": False,
+        "model_download_possible": False,
+        "requires_secret": False,
+        "minimum_characters": 0,
+        "calibrated": True,
+        "independent": True,
+    }
+
+    for metadata in (
+        {"score_direction": "higher"},
+        {"threshold_operator": ">="},
+        {"threshold_operator": 42},
+        {"configuration_sha256": "legacy-extension-value"},
+        {"implementation_sha256": "legacy-extension-value"},
+        {"secret_binding": "operator_managed_file"},
+    ):
+        _validate(dewatermark.detector_capability_schema(), {**base, "metadata": metadata})
+
+
+def test_command_strategy_request_and_response_validate_against_protocol_schema():
+    schema = dewatermark.command_strategy_schema()
+    configuration = "b" * 64
+    context = {
+        "round_index": 0,
+        "invocation_index": 1,
+        "random_seed": 7,
+        "candidate_limit": 2,
+        "detector_feedback": {
+            "detector": "fixture-primary",
+            "status": "detected",
+            "score": 4.0,
+            "threshold": 2.0,
+            "p_value": 0.001,
+            "detection_margin": 2.0,
+            "localization": [{"start": 2, "end": 8}],
+        },
+        "source_localization": [{"start": 2, "end": 8}],
+    }
+    request = {
+        "protocol_version": "1.0",
+        "action": "generate",
+        "strategy": "fixture-strategy",
+        "configuration_sha256": configuration,
+        "policy": {
+            "allow_network": False,
+            "allow_model_download": False,
+            "max_candidates": 2,
+            "max_candidate_characters": 1000,
+            "max_aggregate_candidate_characters": 2000,
+            "max_output_tokens": 500,
+        },
+        "context": context,
+        "text": "private text",
+    }
+    response = {
+        "protocol_version": "1.0",
+        "action": "generate.result",
+        "strategy": "fixture-strategy",
+        "configuration_sha256": configuration,
+        "candidates": ["candidate one", "candidate two"],
+    }
+    _validate(schema, request)
+    _validate(schema, response)
+
+    oversized = copy.deepcopy(request)
+    oversized["policy"]["max_candidates"] = 1001
+    assert not Draft202012Validator(schema).is_valid(oversized)
+
+    oversized = copy.deepcopy(request)
+    oversized["context"]["random_seed"] = 1 << 63
+    assert not Draft202012Validator(schema).is_valid(oversized)
 
 
 def test_reference_benchmark_artifacts_validate_against_all_public_schemas():

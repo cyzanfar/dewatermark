@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/command-strategy-protocol-v1.json",
+  "title": "Dewatermark command strategy protocol v1",
+  "oneOf": [
+    {"$ref": "#/$defs/generateRequest"},
+    {"$ref": "#/$defs/generateResponse"}
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "publicId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]{0,255}$"
+    },
+    "signalSpan": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "integer", "minimum": 0},
+        "end": {"type": "integer", "minimum": 1},
+        "score": {"type": "number"},
+        "p_value": {"type": "number", "minimum": 0, "maximum": 1},
+        "threshold": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "detectorFeedback": {
+      "type": "object",
+      "required": ["detector", "status", "localization"],
+      "properties": {
+        "detector": {"$ref": "#/$defs/publicId"},
+        "status": {
+          "enum": [
+            "detected",
+            "not_detected",
+            "insufficient_evidence",
+            "unsupported",
+            "configuration_mismatch",
+            "detector_error"
+          ]
+        },
+        "score": {"type": "number"},
+        "threshold": {"type": "number"},
+        "p_value": {"type": "number", "minimum": 0, "maximum": 1},
+        "detection_margin": {"type": "number"},
+        "localization": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/signalSpan"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "strategyContext": {
+      "type": "object",
+      "required": [
+        "round_index",
+        "invocation_index",
+        "random_seed",
+        "candidate_limit",
+        "detector_feedback",
+        "source_localization"
+      ],
+      "properties": {
+        "round_index": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "invocation_index": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+        "random_seed": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "candidate_limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "detector_feedback": {"$ref": "#/$defs/detectorFeedback"},
+        "source_localization": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"$ref": "#/$defs/signalSpan"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "allow_network",
+        "allow_model_download",
+        "max_candidates",
+        "max_candidate_characters",
+        "max_aggregate_candidate_characters",
+        "max_output_tokens"
+      ],
+      "properties": {
+        "allow_network": {"type": "boolean"},
+        "allow_model_download": {"type": "boolean"},
+        "max_candidates": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "max_candidate_characters": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "max_aggregate_candidate_characters": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 67108864
+        },
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 32768}
+      },
+      "additionalProperties": false
+    },
+    "generateRequest": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "action",
+        "strategy",
+        "configuration_sha256",
+        "policy",
+        "context",
+        "text"
+      ],
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "action": {"const": "generate"},
+        "strategy": {"$ref": "#/$defs/publicId"},
+        "configuration_sha256": {"$ref": "#/$defs/sha256"},
+        "policy": {"$ref": "#/$defs/policy"},
+        "context": {"$ref": "#/$defs/strategyContext"},
+        "text": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "generateResponse": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "action",
+        "strategy",
+        "configuration_sha256",
+        "candidates"
+      ],
+      "properties": {
+        "protocol_version": {"const": "1.0"},
+        "action": {"const": "generate.result"},
+        "strategy": {"$ref": "#/$defs/publicId"},
+        "configuration_sha256": {"$ref": "#/$defs/sha256"},
+        "candidates": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

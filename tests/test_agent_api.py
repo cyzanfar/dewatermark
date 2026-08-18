@@ -50,6 +50,30 @@ def test_namespaced_environment_takes_precedence(monkeypatch):
     assert DewatermarkConfig.from_env().local_lm == "new/model"
 
 
+def test_detector_search_budgets_round_trip_through_environment_and_planning(monkeypatch):
+    monkeypatch.setenv("DEWATERMARK_MAX_DETECTOR_QUERIES", "17")
+    monkeypatch.setenv("DEWATERMARK_MAX_SEARCH_CANDIDATES", "9")
+
+    config = DewatermarkConfig.from_env()
+
+    assert config.max_detector_queries == 17
+    assert config.max_search_candidates == 9
+    assert config.to_dict()["max_detector_queries"] == 17
+    assert config.to_dict()["max_search_candidates"] == 9
+    limits = dewatermark.plan("sanitize", config).to_dict()["limits"]
+    assert limits["max_detector_queries"] == 17
+    assert limits["max_search_candidates"] == 9
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("max_detector_queries", 0), ("max_search_candidates", 0)),
+)
+def test_detector_search_budgets_reject_nonpositive_values(field, value):
+    with pytest.raises(dewatermark.ConfigurationError, match=field):
+        DewatermarkConfig(**{field: value})
+
+
 def test_invalid_environment_is_actionable(monkeypatch):
     monkeypatch.setenv("DEWATERMARK_ALLOW_MODEL_DOWNLOAD", "sometimes")
     try:
@@ -97,7 +121,20 @@ def test_capabilities_and_plan_are_machine_readable():
     caps = dewatermark.capabilities(OFFLINE)
     planned = dewatermark.plan("sanitize", OFFLINE).to_dict()
     assert caps["schema_version"] == "1.0"
-    assert caps["assurance"]["operations"] == ["inspect", "plan", "apply", "verify"]
+    assert caps["assurance"]["operations"] == [
+        "inspect",
+        "plan",
+        "apply",
+        "verify",
+        "localize",
+        "mitigate",
+    ]
+    assert caps["assurance"]["detector_guided_mitigation"] == {
+        "bounded_search": True,
+        "quality_gates_required": True,
+        "held_out_verifier_required": True,
+        "rollback_returns_exact_source": True,
+    }
     assert any(
         item["registered_name"] == "anthropic-claude"
         and item["metadata"]["status"] == "unsupported_pending_spec"

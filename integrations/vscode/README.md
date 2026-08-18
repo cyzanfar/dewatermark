@@ -6,11 +6,11 @@ the configured executable with `shell: false`, passes document text only on
 stdin, strips ambient credentials from the child environment, caps output, and
 never opens a socket.
 
-This bridge requires `dewatermark>=0.6,<0.7` because it uses the policy-aware
+This bridge requires `dewatermark>=0.7,<0.8` because it uses the policy-aware
 `check --stdin-path` contract:
 
 ```bash
-pipx install 'dewatermark>=0.6,<0.7'
+pipx install 'dewatermark>=0.7,<0.8'
 cd integrations/vscode
 npm ci
 npm test

@@ -249,7 +249,12 @@ METRIC_NARRATIVE_CODES: dict[str, frozenset[str]] = {
             "descriptive_row_wilson_cluster_bootstrap_disjoint_null_thresholds",
         }
     ),
-    "method": frozenset({"held_out_empirical_null"}),
+    "method": frozenset(
+        {
+            "held_out_empirical_null",
+            "holm_bonferroni_cluster_paired_sign_test",
+        }
+    ),
     "null_flag_rate_delta_ci95_method": frozenset(
         {
             "paired_cluster_percentile_bootstrap_fixed_thresholds",
@@ -275,6 +280,26 @@ RESULT_REASON_CODES = frozenset(
         "held_out_test_null_not_estimable",
         "positive_population_empty",
         "threshold_not_estimable",
+    }
+)
+
+# Public failure labels emitted by the benchmark host. Adapter-provided error
+# strings are never evidence: the runner maps failures onto this closed set
+# before constructing aggregation-contract 1.1 observations. Legacy, unmarked
+# v1 observations retain their original open-token compatibility in the
+# observation validator.
+HOST_ERROR_CLASS_CODES = frozenset(
+    {
+        "detector_adapter_failed",
+        "generation_or_primary_detection_failed",
+        "human_control_primary_detection_failed",
+        "quality_check_adapter_failed",
+        "quality_check_contract_failed",
+        "task_check_adapter_failed",
+        "task_check_contract_failed",
+        "transform_adapter_failed",
+        "transform_contract_failed",
+        "transform_failed",
     }
 )
 

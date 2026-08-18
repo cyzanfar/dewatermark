@@ -38,7 +38,15 @@ came from an AI model, and a changed string is not proof that a statistical
 watermark was removed. Only a result verified by the named, configured detector
 is reported as verified for that detector.
 
-External evaluation adapters execute commands supplied by the local operator.
+Detector-guided mitigation accepts a changed candidate only after central
+quality checks, primary-detector clearance, and a distinct calibrated and
+independent held-out verifier. An abstention, exhausted budget, unavailable
+verifier, or failed check returns the exact original input. Localization
+without corrected p-values is reported as exploratory and is never promoted to
+verification.
+
+External detector, candidate-strategy, and evaluation adapters execute commands
+supplied by the local operator.
 Treat adapter specifications as executable code: do not run untrusted adapter
 commands, and isolate third-party detectors in a container or restricted
 environment. The bounded runner strips ambient credentials, limits output and

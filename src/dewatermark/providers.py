@@ -104,12 +104,11 @@ def register_provider(name: str, factory: ProviderFactory, *, replace: bool = Fa
         if key in _providers and not replace:
             raise ConfigurationError("provider name is already registered")
         revision = _provider_revisions.get(key, 0) + 1
+        identity = extension_identity(factory, ("transformer", "scorer"), revision=revision)
         _provider_revisions[key] = revision
         _providers[key] = factory
         _provider_manifests[key] = capability
-        _provider_identities[key] = extension_identity(
-            factory, ("transformer", "scorer"), revision=revision
-        )
+        _provider_identities[key] = identity
 
 
 def _registered_provider(
@@ -228,10 +227,11 @@ def register_detector(name: str, factory: ProviderFactory, *, replace: bool = Fa
         if key in _detectors and not replace:
             raise ConfigurationError("detector name is already registered")
         revision = _detector_revisions.get(key, 0) + 1
+        identity = extension_identity(factory, "detector", revision=revision)
         _detector_revisions[key] = revision
         _detectors[key] = factory
         _detector_manifests[key] = capability
-        _detector_identities[key] = extension_identity(factory, "detector", revision=revision)
+        _detector_identities[key] = identity
 
 
 def _registered_detector(

@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "mismatches": [],
+      "name": "natural-reference-positive",
+      "passed": true
+    },
+    {
+      "mismatches": [],
+      "name": "natural-length-control",
+      "passed": true
+    },
+    {
+      "mismatches": [],
+      "name": "readable-positive-variant",
+      "passed": true
+    },
+    {
+      "mismatches": [],
+      "name": "natural-short-abstention",
+      "passed": true
+    }
+  ],
+  "configuration_sha256": "9927e08f40954293b9c5a10f7b344988b90ceab61eefeee3217e185ee6b28379",
+  "independent_scorer": "natural_adapter.py transition-table scorer",
+  "numeric_absolute_tolerance": 1e-15,
+  "numeric_relative_tolerance": 1e-12,
+  "p_value_log_absolute_tolerance": 1e-10,
+  "passed": true,
+  "protocol_version": "1.1",
+  "upstream_implementation": "https://github.com/jwkirchenbauer/lm-watermarking@82922516930c02f8aa322765defdb5863d07a00e",
+  "vectors_sha256": "518a16f2276d7b48913b512b80edbcbfeb9d1f0bad2068a718972f2eab496a86"
+}

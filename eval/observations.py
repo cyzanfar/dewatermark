@@ -10,35 +10,68 @@ import re
 import stat
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 try:
     from . import metrics
+    from .comparisons import paired_comparator_analysis
     from .evidence import (
         EvidenceValidationError,
         _validate_public_detector_manifest,
         _validate_public_manifest,
         _validate_reproduction,
     )
-    from .manifest import canonical_json, content_addressed_score_table, json_safe
-    from .protocol import merge_coverage, validate_sample_registry
-    from .public_codes import HUMAN_REVIEW_REASON_CODES, is_code_or_commitment
+    from .manifest import (
+        StrictJSONError,
+        canonical_json,
+        content_addressed_score_table,
+        json_safe,
+        strict_json_loads,
+    )
+    from .protocol import (
+        _require_safe_public_values,
+        merge_coverage,
+        validate_sample_registry,
+    )
+    from .public_codes import (
+        HOST_ERROR_CLASS_CODES,
+        HUMAN_REVIEW_REASON_CODES,
+        is_code_or_commitment,
+    )
     from .resources import telemetry_value
 except ImportError:  # direct-script compatibility
     import metrics  # type: ignore
+    from comparisons import paired_comparator_analysis  # type: ignore
     from evidence import (  # type: ignore
         EvidenceValidationError,
         _validate_public_detector_manifest,
         _validate_public_manifest,
         _validate_reproduction,
     )
-    from manifest import canonical_json, content_addressed_score_table, json_safe  # type: ignore
-    from protocol import merge_coverage, validate_sample_registry  # type: ignore
-    from public_codes import HUMAN_REVIEW_REASON_CODES, is_code_or_commitment  # type: ignore
+    from manifest import (  # type: ignore
+        StrictJSONError,
+        canonical_json,
+        content_addressed_score_table,
+        json_safe,
+        strict_json_loads,
+    )
+    from protocol import (  # type: ignore
+        _require_safe_public_values,
+        merge_coverage,
+        validate_sample_registry,
+    )
+    from public_codes import (  # type: ignore
+        HOST_ERROR_CLASS_CODES,
+        HUMAN_REVIEW_REASON_CODES,
+        is_code_or_commitment,
+    )
     from resources import telemetry_value  # type: ignore
 
 OBSERVATION_SCHEMA_VERSION = "1.0"
 MAX_OBSERVATION_BYTES = 512 * 1024 * 1024
+MAX_BOOTSTRAP_REPLICATES = 10_000
+MAX_BOOTSTRAP_SEED = (1 << 63) - 1
+MAX_BOOTSTRAP_WORK_UNITS = 5_000_000
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]{0,255}$")
 _FORBIDDEN_KEYS = {
@@ -118,6 +151,12 @@ def observation_set_identity(value: Mapping[str, Any]) -> str:
     _require_plain_tree(value)
     if type(value) is not dict:
         raise ObservationValidationError("observation set must be a plain object")
+    try:
+        _require_safe_public_values(value, label="observation set")
+    except ValueError:
+        raise ObservationValidationError(
+            "observation set contains private or credential-like text"
+        ) from None
     payload = {key: item for key, item in value.items() if key != "observation_set_id"}
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
@@ -207,6 +246,11 @@ def _validate_human_review(value: Any) -> dict[str, Any]:
 
 
 def _validate_telemetry(value: Any) -> dict[str, Any]:
+    return _validate_attempt_telemetry(value)
+
+
+def _validate_attempt_telemetry(value: Any) -> dict[str, Any]:
+    """Validate possibly incomplete telemetry from an interrupted adapter attempt."""
     required = {
         "wall_time_seconds",
         "peak_rss_bytes",
@@ -215,24 +259,133 @@ def _validate_telemetry(value: Any) -> dict[str, Any]:
         "estimated_cost_usd",
     }
     if not isinstance(value, Mapping) or set(value) != required:
-        raise ObservationValidationError("observation telemetry fields are incomplete")
-    for field in ("wall_time_seconds", "estimated_cost_usd"):
-        number = value.get(field)
-        if (
-            not isinstance(number, (int, float))
-            or isinstance(number, bool)
-            or not math.isfinite(number)
-            or number < 0
-        ):
-            raise ObservationValidationError(f"telemetry {field} must be finite and non-negative")
-    for field in ("remote_queries", "generated_tokens"):
-        number = value.get(field)
-        if not isinstance(number, int) or isinstance(number, bool) or number < 0:
-            raise ObservationValidationError(f"telemetry {field} must be a non-negative integer")
+        raise ObservationValidationError("attempt telemetry fields are incomplete")
+    wall = value.get("wall_time_seconds")
+    if (
+        not isinstance(wall, (int, float))
+        or isinstance(wall, bool)
+        or not math.isfinite(wall)
+        or wall < 0
+    ):
+        raise ObservationValidationError("attempt wall time must be finite and non-negative")
     peak = value.get("peak_rss_bytes")
-    if peak is not None and (not isinstance(peak, int) or isinstance(peak, bool) or peak < 0):
-        raise ObservationValidationError("peak_rss_bytes must be null or a non-negative integer")
+    if peak is not None and (type(peak) is not int or peak < 0):
+        raise ObservationValidationError("attempt peak RSS is invalid")
+    for field in ("remote_queries", "generated_tokens"):
+        item = value.get(field)
+        if item is not None and (type(item) is not int or item < 0):
+            raise ObservationValidationError(f"attempt {field} is invalid")
+    cost = value.get("estimated_cost_usd")
+    if cost is not None and (
+        not isinstance(cost, (int, float))
+        or isinstance(cost, bool)
+        or not math.isfinite(cost)
+        or cost < 0
+    ):
+        raise ObservationValidationError("attempt estimated cost is invalid")
     return dict(value)
+
+
+def _attempt_rows(row: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    history = row.get("attempt_history")
+    if isinstance(history, list) and history:
+        return history
+    return [
+        {
+            "attempt_index": 1,
+            "state": row["transformation_state"],
+            "error_class": row["error_class"],
+            "telemetry": row["telemetry"],
+            "telemetry_complete": True,
+        }
+    ]
+
+
+def _detector_independence_bound(detectors: Mapping[str, Mapping[str, Any]]) -> bool:
+    """Return whether public metadata supports a distinct-detector claim.
+
+    Sparse legacy v1 manifests remain valid inputs, but a self-declared
+    ``independent`` flag is not enough to upgrade aggregate coverage.
+    """
+    if len(detectors) < 2:
+        return False
+    required_digests = (
+        "sidecar_sha256",
+        "command_sha256",
+        "implementation_sha256",
+        "configuration_sha256",
+        "model_sha256",
+        "tokenizer_sha256",
+        "source_sha256",
+    )
+    identities: list[dict[str, Any]] = []
+    for identifier, entry in detectors.items():
+        manifest = entry.get("manifest")
+        if type(manifest) is not dict or manifest.get("id") != identifier:
+            return False
+        if (
+            manifest.get("independent_requested") is not True
+            or manifest.get("independent") is not True
+            or manifest.get("reproducible") is not True
+            or manifest.get("reproducibility_blockers") != []
+            or manifest.get("command_identity") != "public-shape-v1"
+            or type(manifest.get("golden_conformance")) is not dict
+            or manifest["golden_conformance"].get("passed") is not True
+            or any(
+                type(manifest["golden_conformance"].get(field)) is not str
+                or not _SHA256.fullmatch(manifest["golden_conformance"][field])
+                for field in ("vectors_sha256", "report_sha256")
+            )
+            or any(
+                type(manifest.get(field)) is not str or not _SHA256.fullmatch(manifest[field])
+                for field in required_digests
+            )
+        ):
+            return False
+        executable = manifest.get("executable_digests")
+        if type(executable) is not list or not executable:
+            return False
+        script_digests = tuple(
+            sorted(
+                item["sha256"]
+                for item in executable
+                if type(item) is dict
+                and type(item.get("argument_index")) is int
+                and item["argument_index"] > 0
+                and type(item.get("sha256")) is str
+                and _SHA256.fullmatch(item["sha256"])
+            )
+        )
+        if not script_digests:
+            script_digests = tuple(
+                sorted(
+                    item["sha256"]
+                    for item in executable
+                    if type(item) is dict
+                    and type(item.get("sha256")) is str
+                    and _SHA256.fullmatch(item["sha256"])
+                )
+            )
+        if not script_digests:
+            return False
+        identities.append(
+            {
+                "id": identifier,
+                "sidecar": manifest["sidecar_sha256"],
+                "command": manifest["command_sha256"],
+                "scripts": script_digests,
+                "implementation_source": (
+                    manifest["implementation_sha256"],
+                    manifest["source_sha256"],
+                ),
+                "full": tuple(manifest[field] for field in required_digests[2:]),
+            }
+        )
+    for field in ("id", "sidecar", "command", "scripts", "implementation_source", "full"):
+        values = [identity[field] for identity in identities]
+        if len(values) != len(set(values)):
+            return False
+    return True
 
 
 def validate_observation_set(
@@ -273,6 +426,12 @@ def validate_observation_set(
         raise ObservationValidationError("run manifest violates the public contract") from None
     detectors = _validate_ids(value.get("detectors"), "detectors")
     conditions = _validate_ids(value.get("conditions"), "conditions")
+    run_manifest = value["run_manifest"]
+    strict_aggregate = run_manifest.get("aggregation_contract_version") == "1.1"
+    if strict_aggregate and any("::" in identifier for identifier in (*detectors, *conditions)):
+        raise ObservationValidationError(
+            "aggregation contract 1.1 reserves the double-colon identifier delimiter"
+        )
     primary = [
         identifier for identifier, item in detectors.items() if item.get("role") == "primary"
     ]
@@ -329,7 +488,7 @@ def validate_observation_set(
             "error_class",
             "telemetry",
         }
-        if set(item) != expected_fields:
+        if set(item) not in (expected_fields, expected_fields | {"attempt_history"}):
             raise ObservationValidationError(f"observation {index} fields are incomplete")
         sample_id = item.get("sample_id")
         detector_id = item.get("detector_id")
@@ -357,9 +516,13 @@ def validate_observation_set(
             count = item.get(field)
             if not isinstance(count, int) or isinstance(count, bool) or count < 0:
                 raise ObservationValidationError(f"observation {index} {field} is invalid")
-        if item["source_effective_tokens"] != samples[str(sample_id)]["effective_detector_tokens"]:
+        if (
+            detector_id == primary[0]
+            and item["source_effective_tokens"]
+            != samples[str(sample_id)]["effective_detector_tokens"]
+        ):
             raise ObservationValidationError(
-                f"observation {index} effective token count differs from registration"
+                f"observation {index} primary-detector effective token count differs from registration"
             )
         state = item.get("transformation_state")
         if state not in {"accepted", "failed", "abstained"}:
@@ -377,17 +540,194 @@ def validate_observation_set(
         error = item.get("error_class")
         if error is not None and (not isinstance(error, str) or not _ID.fullmatch(error)):
             raise ObservationValidationError(f"observation {index} error_class is invalid")
+        if strict_aggregate and error is not None and error not in HOST_ERROR_CLASS_CODES:
+            raise ObservationValidationError(
+                f"observation {index} error_class is not a registered host code"
+            )
         if state == "failed" and error is None:
             raise ObservationValidationError(f"failed observation {index} requires error_class")
         _validate_telemetry(item.get("telemetry"))
+        history = item.get("attempt_history")
+        if history is not None:
+            if type(history) is not list or not history:
+                raise ObservationValidationError(
+                    f"observation {index} attempt_history must be non-empty"
+                )
+            for attempt_index, attempt in enumerate(history, 1):
+                if type(attempt) is not dict or set(attempt) != {
+                    "attempt_index",
+                    "state",
+                    "error_class",
+                    "telemetry",
+                    "telemetry_complete",
+                }:
+                    raise ObservationValidationError(
+                        f"observation {index} attempt history fields are incomplete"
+                    )
+                if attempt.get("attempt_index") != attempt_index:
+                    raise ObservationValidationError(
+                        f"observation {index} attempt indices must be contiguous"
+                    )
+                attempt_state = attempt.get("state")
+                if attempt_state not in {"accepted", "failed", "abstained"}:
+                    raise ObservationValidationError(
+                        f"observation {index} attempt state is invalid"
+                    )
+                attempt_error = attempt.get("error_class")
+                if attempt_error is not None and (
+                    type(attempt_error) is not str or not _ID.fullmatch(attempt_error)
+                ):
+                    raise ObservationValidationError(
+                        f"observation {index} attempt error_class is invalid"
+                    )
+                if (
+                    strict_aggregate
+                    and attempt_error is not None
+                    and attempt_error not in HOST_ERROR_CLASS_CODES
+                ):
+                    raise ObservationValidationError(
+                        f"observation {index} attempt error_class is not a registered host code"
+                    )
+                if attempt_state == "failed" and attempt_error is None:
+                    raise ObservationValidationError(
+                        f"observation {index} failed attempt requires error_class"
+                    )
+                if type(attempt.get("telemetry_complete")) is not bool:
+                    raise ObservationValidationError(
+                        f"observation {index} attempt telemetry status is invalid"
+                    )
+                telemetry = _validate_attempt_telemetry(attempt.get("telemetry"))
+                if attempt["telemetry_complete"] is True and any(
+                    telemetry[field] is None
+                    for field in (
+                        "remote_queries",
+                        "generated_tokens",
+                        "estimated_cost_usd",
+                    )
+                ):
+                    raise ObservationValidationError(
+                        f"observation {index} complete attempt telemetry contains nulls"
+                    )
+            terminal = history[-1]
+            if (
+                terminal["state"] != state
+                or terminal["error_class"] != error
+                or terminal["telemetry"] != item["telemetry"]
+                or terminal["telemetry_complete"]
+                is not all(
+                    terminal["telemetry"][field] is not None
+                    for field in (
+                        "remote_queries",
+                        "generated_tokens",
+                        "estimated_cost_usd",
+                    )
+                )
+            ):
+                raise ObservationValidationError(
+                    f"observation {index} terminal attempt must match the observation"
+                )
     resource = value.get("resource_summary")
-    if not isinstance(resource, Mapping) or set(resource) != {"model_size_bytes"}:
+    if not isinstance(resource, Mapping) or set(resource) not in (
+        {"model_size_bytes"},
+        {
+            "model_size_bytes",
+            "execution_budget",
+            "adapter_processes",
+            "adapter_process_resources",
+            "run_attempts",
+        },
+    ):
         raise ObservationValidationError("resource_summary is incomplete")
     model_size = resource.get("model_size_bytes")
     if model_size is not None and (
         not isinstance(model_size, int) or isinstance(model_size, bool) or model_size < 0
     ):
         raise ObservationValidationError("model_size_bytes is invalid")
+    if "execution_budget" in resource:
+        execution = resource["execution_budget"]
+        if type(execution) is not dict or set(execution) != {
+            "limits",
+            "usage",
+            "deadline_at_unix",
+        }:
+            raise ObservationValidationError("execution budget summary is invalid")
+        limits = execution.get("limits")
+        usage = execution.get("usage")
+        expected_limits = {
+            "max_records",
+            "max_requested_tokens",
+            "max_adapter_processes",
+            "deadline_seconds",
+            "max_cancellation_checks",
+        }
+        expected_usage = {
+            "records",
+            "requested_tokens",
+            "adapter_processes",
+            "cancellation_checks",
+        }
+        if (
+            type(limits) is not dict
+            or set(limits) != expected_limits
+            or type(usage) is not dict
+            or set(usage) != expected_usage
+            or any(type(item) is not int or item < 0 for item in limits.values())
+            or any(type(item) is not int or item < 0 for item in usage.values())
+            or usage["records"] > limits["max_records"]
+            or usage["requested_tokens"] > limits["max_requested_tokens"]
+            or usage["adapter_processes"] > limits["max_adapter_processes"]
+            or usage["cancellation_checks"] > limits["max_cancellation_checks"]
+            or type(execution.get("deadline_at_unix")) not in (int, float)
+            or not math.isfinite(float(execution["deadline_at_unix"]))
+        ):
+            raise ObservationValidationError("execution budget values are invalid")
+        for key, fields in (
+            (
+                "adapter_processes",
+                {"started", "completed", "failed", "telemetry_incomplete"},
+            ),
+            (
+                "run_attempts",
+                {"sample_failures", "observation_failures", "observation_attempts"},
+            ),
+        ):
+            summary = resource[key]
+            if (
+                type(summary) is not dict
+                or set(summary) != fields
+                or any(type(item) is not int or item < 0 for item in summary.values())
+            ):
+                raise ObservationValidationError(f"{key} summary is invalid")
+        process_resources = resource["adapter_process_resources"]
+        if type(process_resources) is not dict or set(process_resources) != {
+            "telemetry_complete",
+            "wall_time_seconds",
+            "peak_rss_bytes",
+            "remote_queries",
+            "generated_tokens",
+            "estimated_cost_usd",
+        }:
+            raise ObservationValidationError("adapter process resource summary is invalid")
+        _validate_attempt_telemetry(
+            {
+                key: process_resources[key]
+                for key in (
+                    "wall_time_seconds",
+                    "peak_rss_bytes",
+                    "remote_queries",
+                    "generated_tokens",
+                    "estimated_cost_usd",
+                )
+            }
+        )
+        if type(process_resources["telemetry_complete"]) is not bool or (
+            process_resources["telemetry_complete"]
+            and any(
+                process_resources[field] is None
+                for field in ("remote_queries", "generated_tokens", "estimated_cost_usd")
+            )
+        ):
+            raise ObservationValidationError("adapter process resource status is invalid")
     _validate_human_review(value.get("human_review"))
     try:
         _validate_reproduction(value.get("reproduction"))
@@ -437,6 +777,8 @@ def _stratum_rows(
     samples: Mapping[str, Mapping[str, Any]],
     source_threshold: float | None,
     candidate_threshold: float | None,
+    *,
+    direction_sign: float,
 ) -> list[dict[str, Any]]:
     counts: dict[tuple[str, str, str, str], Counter[str]] = defaultdict(Counter)
     for sample_id, row in zip(positive_ids, positive_rows):
@@ -447,15 +789,17 @@ def _stratum_rows(
             str(sample["length_bin"]),
             str(sample.get("key_fingerprint") or "none"),
         )
-        state = str(row["transformation_state"])
-        counts[key]["attempted"] += 1
-        counts[key][state] += 1
+        attempts = _attempt_rows(row)
+        for attempt in attempts:
+            state = str(attempt["state"])
+            counts[key]["attempted"] += 1
+            counts[key][state] += 1
         if (
             source_threshold is not None
             and candidate_threshold is not None
-            and row["source_score"] > source_threshold
-            and row["candidate_score"] <= candidate_threshold
-            and state == "accepted"
+            and direction_sign * float(row["source_score"]) > source_threshold
+            and direction_sign * float(row["candidate_score"]) <= candidate_threshold
+            and row["transformation_state"] == "accepted"
             and row["quality_gate_passed"] is True
             and row["task_check_passed"] is True
         ):
@@ -487,16 +831,41 @@ def aggregate_observation_set(
     *,
     bootstrap_replicates: int = 500,
     bootstrap_seed: int = 0,
+    comparator_registry: Mapping[str, Any] | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Calculate fixed-FPR aggregates while retaining every attempted row."""
+    if (
+        type(bootstrap_replicates) is not int
+        or not 2 <= bootstrap_replicates <= MAX_BOOTSTRAP_REPLICATES
+        or type(bootstrap_seed) is not int
+        or not 0 <= bootstrap_seed <= MAX_BOOTSTRAP_SEED
+    ):
+        raise ObservationValidationError("bootstrap settings are invalid")
     validation = validate_observation_set(value, sample_registry)
     samples = {str(item["sample_id"]): item for item in sample_registry["samples"]}
     all_rows = value["observations"]
+    detector_directions = {
+        str(item["id"]): str(item["manifest"].get("score_direction", "higher"))
+        for item in value["detectors"]
+    }
     grouped: dict[tuple[str, str], dict[str, Mapping[str, Any]]] = defaultdict(dict)
     for item in all_rows:
         grouped[(str(item["detector_id"]), str(item["condition_id"]))][str(item["sample_id"])] = (
             item
         )
+    total_attempts = sum(len(_attempt_rows(item)) for item in all_rows)
+    bootstrap_work = bootstrap_replicates * (
+        len(all_rows) * (8 * len(value["requested_fprs"]) + 4) + 2 * total_attempts
+    )
+    if bootstrap_work > MAX_BOOTSTRAP_WORK_UNITS:
+        raise ObservationValidationError("bootstrap workload exceeds the bounded aggregation limit")
+
+    def poll() -> None:
+        if checkpoint is not None:
+            checkpoint()
+
+    poll()
     group_results: dict[str, Any] = {}
     all_statistics_estimable = True
     all_statistics_stable = True
@@ -505,6 +874,7 @@ def aggregate_observation_set(
     score_tables: dict[str, Any] = {}
     primary_flags: dict[tuple[str, str], dict[str, tuple[bool | None, bool | None]]] = {}
     for group_index, ((detector_id, condition_id), rows) in enumerate(sorted(grouped.items())):
+        poll()
         calibration_ids, calibration = _ordered(
             rows, samples, split="calibration", cohort="matched_generator_null"
         )
@@ -519,15 +889,21 @@ def aggregate_observation_set(
         def cluster(identifiers: Sequence[str]) -> list[str]:
             return [str(samples[identifier]["cluster_id"]) for identifier in identifiers]
 
+        direction_sign = -1.0 if detector_directions[detector_id] == "lower" else 1.0
+
+        def score(item: Mapping[str, Any], field: str, *, sign: float = direction_sign) -> float:
+            return sign * float(item[field])
+
         fixed_reports: dict[str, Any] = {}
         for fpr_index, fpr in enumerate(value["requested_fprs"]):
+            poll()
             report = metrics.fixed_fpr_paired_report(
-                [float(item["source_score"]) for item in positives],
-                [float(item["candidate_score"]) for item in positives],
-                [float(item["source_score"]) for item in nulls],
-                [float(item["candidate_score"]) for item in nulls],
-                [float(item["source_score"]) for item in calibration],
-                [float(item["candidate_score"]) for item in calibration],
+                [score(item, "source_score") for item in positives],
+                [score(item, "candidate_score") for item in positives],
+                [score(item, "source_score") for item in nulls],
+                [score(item, "candidate_score") for item in nulls],
+                [score(item, "source_score") for item in calibration],
+                [score(item, "candidate_score") for item in calibration],
                 fpr=float(fpr),
                 positive_cluster_ids=cluster(positive_ids),
                 null_cluster_ids=cluster(null_ids),
@@ -536,6 +912,7 @@ def aggregate_observation_set(
                 bootstrap_seed=bootstrap_seed + group_index * 100 + fpr_index,
             )
             fixed_reports[str(fpr)] = report
+            poll()
             all_statistics_estimable &= bool(report["estimable"])
             all_statistics_stable &= bool(report.get("adequate_for_stable_estimate"))
         primary_fpr = str(value["requested_fprs"][0])
@@ -543,28 +920,46 @@ def aggregate_observation_set(
         paired = primary_report.get("paired_outcomes", {})
         source_threshold = paired.get("source_threshold")
         candidate_threshold = paired.get("candidate_threshold")
-        success_bools = [
+        terminal_successes = [
             source_threshold is not None
             and candidate_threshold is not None
-            and item["source_score"] > source_threshold
-            and item["candidate_score"] <= candidate_threshold
+            and score(item, "source_score") > source_threshold
+            and score(item, "candidate_score") <= candidate_threshold
             and item["transformation_state"] == "accepted"
             and item["quality_gate_passed"] is True
             and item["task_check_passed"] is True
             for item in positives
         ]
+        expected_positive_ids = sorted(
+            sample_id
+            for sample_id, sample in samples.items()
+            if sample["split"] == "final_test" and sample["cohort"] == "watermarked_positive"
+        )
+        missing_positive_ids = sorted(set(expected_positive_ids) - set(positive_ids))
+        attempt_states: list[str] = []
+        observed_successes: list[bool] = []
+        attempt_clusters: list[str] = []
+        for sample_id, item, terminal_success in zip(positive_ids, positives, terminal_successes):
+            item_attempts = _attempt_rows(item)
+            attempt_states.extend(str(attempt["state"]) for attempt in item_attempts)
+            observed_successes.extend([False] * (len(item_attempts) - 1) + [bool(terminal_success)])
+            attempt_clusters.extend([str(samples[sample_id]["cluster_id"])] * len(item_attempts))
+        attempt_states.extend(["failed"] * len(missing_positive_ids))
+        observed_successes.extend([False] * len(missing_positive_ids))
+        attempt_clusters.extend(cluster(missing_positive_ids))
         attempts = metrics.attempt_outcome_report(
-            [str(item["transformation_state"]) for item in positives],
-            success_bools,
-            cluster_ids=cluster(positive_ids),
+            attempt_states,
+            observed_successes,
+            cluster_ids=attempt_clusters,
             bootstrap_replicates=bootstrap_replicates,
             bootstrap_seed=bootstrap_seed + group_index * 100 + 98,
         )
+        poll()
         human_outcomes = metrics.paired_detection_outcomes(
             [],
             [],
-            [float(item["source_score"]) for item in humans],
-            [float(item["candidate_score"]) for item in humans],
+            [score(item, "source_score") for item in humans],
+            [score(item, "candidate_score") for item in humans],
             source_threshold=float("nan") if source_threshold is None else source_threshold,
             candidate_threshold=float("nan")
             if candidate_threshold is None
@@ -584,8 +979,10 @@ def aggregate_observation_set(
         flags: dict[str, tuple[bool | None, bool | None]] = {}
         for sample_id, item in zip(positive_ids, positives):
             flags[sample_id] = (
-                item["source_score"] > source_threshold if source_threshold is not None else None,
-                item["candidate_score"] > candidate_threshold
+                score(item, "source_score") > source_threshold
+                if source_threshold is not None
+                else None,
+                score(item, "candidate_score") > candidate_threshold
                 if candidate_threshold is not None
                 else None,
             )
@@ -609,6 +1006,7 @@ def aggregate_observation_set(
                         "task_check_passed": item["task_check_passed"],
                         "source_effective_tokens": item["source_effective_tokens"],
                         "candidate_effective_tokens": item["candidate_effective_tokens"],
+                        "attempt_count": len(_attempt_rows(item)),
                     }
                 )
         group_id = f"{detector_id}::{condition_id}"
@@ -620,7 +1018,12 @@ def aggregate_observation_set(
             "attempt_outcomes": attempts,
             "human_control_outcomes": human_outcomes,
             "strata": _stratum_rows(
-                positive_ids, positives, samples, source_threshold, candidate_threshold
+                positive_ids,
+                positives,
+                samples,
+                source_threshold,
+                candidate_threshold,
+                direction_sign=direction_sign,
             ),
             "score_table_sha256": score_tables[group_id]["sha256"],
             "sample_counts": {
@@ -655,34 +1058,71 @@ def aggregate_observation_set(
                     "cross_only": sum(not left and right for left, right in eligible),
                     "neither_flagged": sum(not left and not right for left, right in eligible),
                 }
-    independent_detectors = all(
-        item["manifest"].get("independent") is True
-        and isinstance(item["manifest"].get("golden_conformance"), Mapping)
-        and item["manifest"]["golden_conformance"].get("passed") is True
-        for item in validation["detectors"].values()
-    )
-    telemetry_rows = [item["telemetry"] for item in all_rows]
+    independent_detectors = _detector_independence_bound(validation["detectors"])
+    attempt_entries = [attempt for item in all_rows for attempt in _attempt_rows(item)]
+    telemetry_rows = [item["telemetry"] for item in attempt_entries]
     peaks = [
         item["peak_rss_bytes"] for item in telemetry_rows if item["peak_rss_bytes"] is not None
     ]
-    model_size = value["resource_summary"]["model_size_bytes"]
+    resource_summary = value["resource_summary"]
+    model_size = resource_summary["model_size_bytes"]
+    process_resources = resource_summary.get("adapter_process_resources")
+    complete_process_resources = (
+        isinstance(process_resources, Mapping)
+        and process_resources.get("telemetry_complete") is True
+    )
+
+    def run_resource(field: str, fallback: Any) -> Any:
+        if process_resources is None:
+            return fallback
+        return process_resources[field] if complete_process_resources else None
+
     telemetry = {
         "wall_time": telemetry_value(
-            sum(item["wall_time_seconds"] for item in telemetry_rows), "seconds"
+            run_resource(
+                "wall_time_seconds",
+                sum(item["wall_time_seconds"] for item in telemetry_rows),
+            ),
+            "seconds",
         ),
         "process_cpu_time": telemetry_value(None, "seconds", state="not_available"),
-        "peak_rss": telemetry_value(max(peaks) if peaks else None, "bytes"),
+        "peak_rss": telemetry_value(
+            run_resource("peak_rss_bytes", max(peaks) if peaks else None), "bytes"
+        ),
         "model_size": telemetry_value(model_size, "bytes"),
         "remote_queries": telemetry_value(
-            sum(item["remote_queries"] for item in telemetry_rows), "queries"
+            run_resource(
+                "remote_queries",
+                sum(item["remote_queries"] for item in telemetry_rows)
+                if all(item["remote_queries"] is not None for item in telemetry_rows)
+                else None,
+            ),
+            "queries",
         ),
         "generated_tokens": telemetry_value(
-            sum(item["generated_tokens"] for item in telemetry_rows), "tokens"
+            run_resource(
+                "generated_tokens",
+                sum(item["generated_tokens"] for item in telemetry_rows)
+                if all(item["generated_tokens"] is not None for item in telemetry_rows)
+                else None,
+            ),
+            "tokens",
         ),
         "estimated_cost": telemetry_value(
-            sum(item["estimated_cost_usd"] for item in telemetry_rows), "USD"
+            run_resource(
+                "estimated_cost_usd",
+                sum(item["estimated_cost_usd"] for item in telemetry_rows)
+                if all(item["estimated_cost_usd"] is not None for item in telemetry_rows)
+                else None,
+            ),
+            "USD",
         ),
     }
+    resource_accounting_complete = model_size is not None and (
+        (complete_process_resources and process_resources.get("peak_rss_bytes") is not None)
+        if process_resources is not None
+        else bool(peaks)
+    )
     human_review = _validate_human_review(value["human_review"])
     execution_coverage = {
         "detector_statistics": {
@@ -703,11 +1143,11 @@ def aggregate_observation_set(
         },
         "negative_effects": {
             "state": "complete"
-            if len(detector_ids) >= 2 and all_required_rows_present
+            if len(detector_ids) >= 2 and independent_detectors and all_required_rows_present
             else "partial",
             "reason": (
                 "cross_detector_negative_effects_complete"
-                if len(detector_ids) >= 2 and all_required_rows_present
+                if len(detector_ids) >= 2 and independent_detectors and all_required_rows_present
                 else "cross_detector_negative_effects_incomplete"
             ),
         },
@@ -732,10 +1172,10 @@ def aggregate_observation_set(
             ),
         },
         "resource_accounting": {
-            "state": "complete" if model_size is not None and peaks else "partial",
+            "state": "complete" if resource_accounting_complete else "partial",
             "reason": (
                 "model_resource_telemetry_complete"
-                if model_size is not None and peaks
+                if resource_accounting_complete
                 else "model_size_or_peak_memory_unavailable"
             ),
         },
@@ -759,16 +1199,35 @@ def aggregate_observation_set(
         "score_tables": score_tables,
         "failure_classes": dict(
             sorted(
-                Counter(
-                    str(item["error_class"])
-                    for item in all_rows
-                    if item["transformation_state"] == "failed"
+                (
+                    Counter(
+                        str(attempt["error_class"])
+                        for item in all_rows
+                        for attempt in _attempt_rows(item)
+                        if attempt["state"] == "failed"
+                    )
+                    + Counter(
+                        {
+                            "missing_required_observation": validation[
+                                "missing_required_observations"
+                            ]
+                        }
+                    )
                 ).items()
             )
         ),
         "coverage": coverage,
         "resource_telemetry": telemetry,
     }
+    if comparator_registry is not None:
+        poll()
+        aggregate["comparative_analysis"] = paired_comparator_analysis(
+            value,
+            aggregate,
+            sample_registry,
+            comparator_registry,
+        )
+    poll()
     aggregate["aggregate_sha256"] = hashlib.sha256(
         canonical_json(aggregate).encode("utf-8")
     ).hexdigest()
@@ -790,10 +1249,10 @@ def read_observation_set(path: Path) -> dict[str, Any]:
             data = handle.read(MAX_OBSERVATION_BYTES + 1)
         if len(data) > MAX_OBSERVATION_BYTES:
             raise ObservationValidationError("observation set exceeds the size limit")
-        value = json.loads(data.decode("utf-8"))
+        value = strict_json_loads(data)
     except ObservationValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise ObservationValidationError("observation set is not readable bounded JSON") from None
     finally:
         if descriptor >= 0:

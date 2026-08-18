@@ -1,129 +1,174 @@
-# Step-function implementation plan and status
+# Step-function plan and current status
 
-## Threat model
+## What the package can honestly say
 
-This package operates on text supplied after generation. It has no access to a
-provider's private watermark key, detector, generation history, or retrieval
-database. A result therefore means only that a named detector score changed at
-a named operating point while configured quality constraints passed.
+This package receives text after generation. It normally does not have the
+provider's private key, production detector, generation record, or retrieval
+database. A statistical result can therefore say only that named detector
+configurations changed from positive to clear while configured quality checks
+passed.
 
-Anthropic now confirms embedded text marking for supported Claude models
-launched on or after August 2, 2026, but has not published its text algorithm,
-keys, detector, threshold, or technical verification guidance. Claude must
-therefore return an `unsupported` detection outcome, with capability metadata
-status `unsupported_pending_spec`; Unicode cleanup or generic rewriting cannot
-substantiate a Claude-removal claim. Claude, Gemini, reference SynthID, OpenAI,
-and other vendor surfaces must not be presented as interchangeable watermark
-algorithms.
+It cannot prove that text is human-written. It cannot prove that every
+watermark is absent. It cannot transfer a result from one tokenizer, key,
+threshold, or provider to another.
 
-## Implemented step-function changes
+Anthropic has confirmed embedded text marking for supported Claude models
+launched on or after August 2, 2026, but has not published the algorithm, keys,
+detector, threshold, or technical verification guidance used here. Claude
+therefore remains `unsupported` with status `unsupported_pending_spec`.
+Unicode cleanup and generic rewriting are not evidence of Claude watermark
+removal. The same rule applies to any private provider scheme without a
+compatible detector.
 
-- Safe Unicode sanitation is the default. Compatibility folding and UTS #39
-  skeleton replacement are isolated behind the explicitly lossy `aggressive`
-  profile. Forensics remains non-mutating.
-- The built-in [BIRA](https://arxiv.org/abs/2509.23019)-style approximation uses a self-information proxy
-  suppression set, negative logit bias, bounded retries, adaptive bias backoff,
-  repetition checks, and deterministic quality-gated acceptance. It is not the
-  authors' reference implementation.
-- The built-in [SIRA](https://arxiv.org/abs/2505.05190)-inspired approximation masks a proportional set of
-  high-self-information tokens, produces a separate reference rewrite,
-  performs reference-assisted infill, and rejects unresolved or quality-failing
-  output. It is not the authors' reference implementation.
-- Generated outputs cannot silently drop numbers, URLs, emails, quoted strings,
-  or large amounts of content. These gates are necessary but not sufficient for
-  semantic equivalence.
-- Long text is chunked at structure-aware boundaries and reconstructed exactly.
-- Remote processing is deny-by-default and requires explicit consent.
-- `auto` uses failure-aware fallback instead of treating dependency import as a
-  successful rewrite.
-- The evaluator uses matched transformed nulls, minimum-null estimability rules,
-  Wilson intervals, length sweeps, and independent JSON command adapters.
-- Built-in watermark implementations are labelled as internal references or
-  approximations rather than vendor validation.
+## What is implemented
 
-## External validation required before a best-in-class claim
+### Safe text cleanup
 
-Code support and empirical evidence are different deliverables. The following
-matrix must be run with sufficient compute and licensed model/detector access:
+- The default Unicode sanitizer removes documented hidden or risky artifacts
+  without broad compatibility folding.
+- The `aggressive` profile is explicitly lossy.
+- Forensic inspection never changes the input.
+- Quotes, links, email addresses, numbers, code, markup, structured data, and
+  large content changes are protected by central quality checks.
 
-| Family | Required independent implementation |
+### Exact public reference configurations
+
+- The package keeps small word-level KGW, Unigram, and tournament fixtures for
+  offline integration tests.
+- The packaged KGW and Unigram packs add exact natural-text reference profiles
+  with pinned upstream revisions, content-addressed configuration material,
+  checked conformance records, and closed 256-word vocabularies.
+- Unknown words and short inputs return typed `unsupported` or
+  `insufficient_evidence` results instead of a guessed score.
+- Both exact profiles remain `calibrated=false` and
+  `production_detection=false`. Exact conformance for one public configuration
+  is not an efficacy result.
+- Each pack also includes a sealing tool and command adapter for an exact local
+  Hugging Face tokenizer snapshot and an owner-only POSIX key file. The
+  reference adapter fails closed where it cannot verify equivalent file
+  permissions. Sealing records the public configuration and file digests
+  without publishing the key. A sealed adapter still starts uncalibrated and
+  non-independent.
+
+See [Reference detectors](REFERENCE_DETECTORS.md) for the exact limits.
+
+### Detector-guided search with rollback
+
+- `DetectorSession` provides one request-scoped cache, detector-query budget,
+  deterministic query order, and content-free ledger.
+- `localize()` prefers detector-supplied ranges. Its fallback window search
+  uses Bonferroni correction only for calibrated p-values and otherwise labels
+  output exploratory.
+- `mitigate()` asks one or more strategies for candidates, runs every candidate
+  through the same quality policy, scores it with the primary detector, and
+  orders passing candidates by edit size and stable tie-breakers.
+- Held-out verifiers do not guide candidate generation or ranking. The runtime
+  checks that they are distinct and requires every one to be calibrated,
+  independent, positive on the source, and clear on the candidate.
+- Only a fully verified candidate is returned. Missing verification, residual
+  evidence, detector failure, budget exhaustion, bad quality, and empty search
+  all return the exact source value.
+- Receipts include hashes, typed outcomes, edit counts, and resource usage, not
+  source text or rejected candidates.
+
+See [Detector-guided mitigation](DETECTOR_GUIDED_MITIGATION.md) for the full
+flow.
+
+### Safer extension boundary
+
+- Registered transformer providers can be used as candidate strategies, but
+  they cannot approve their own output.
+- `CommandStrategy` provides a versioned, bounded JSON process protocol for
+  candidate generators with separate dependencies.
+- Static discovery does not start the command. Runtime uses immutable argv, no
+  shell, a small environment, bounded output, explicit network/model consent,
+  and redacted failures.
+- The executable remains trusted code; containers or operating-system
+  isolation are still needed for untrusted repositories.
+
+The workflow is available through Python, `dewatermark localize`,
+`dewatermark mitigate`, `POST /localize`, `POST /mitigate`, and the `localize`
+and `mitigate` MCP tools. Versioned JSON Schemas cover localization results,
+mitigation results, and the command-strategy protocol.
+
+### Existing rewrite methods
+
+- The built-in [BIRA-style](https://arxiv.org/abs/2509.23019) mode uses a
+  self-information approximation, negative token bias, bounded retries,
+  adaptive backoff, and quality-gated acceptance.
+  It is not the paper authors' reference implementation.
+- The built-in [SIRA-inspired](https://arxiv.org/abs/2505.05190) mode masks
+  selected high-information tokens, creates a separate reference rewrite,
+  fills the selected spans, and rejects unresolved or quality-failing output.
+  It is not the paper authors' reference implementation.
+- Long text is split at structure-aware boundaries and reconstructed in order.
+- Remote processing and model downloads are separate, off-by-default choices.
+
+## What is not yet evidence
+
+The implementation now has the control flow needed for a defensible test. It
+does not ship real production-watermark efficacy results. The checked-in tiny
+fixtures prove protocol behavior only.
+
+Before publishing a comparative or “best” claim, run a frozen protocol with
+licensed models and detectors:
+
+| Watermark family | Independent check needed |
 | --- | --- |
-| KGW variants / Unigram | MarkLLM and original author implementation |
-| SynthID-Text | Google reference or Transformers implementation |
-| Distortion-free | Kuditipudi/Christ-compatible implementation |
-| Semantic | SemStamp, SIR/SemaMark, PostMark |
-| Learned AI detection | At least one independently trained detector |
-| Retrieval provenance | Provider-held generation corpus; report as non-removable |
+| KGW and Unigram variants | Original author implementation plus another maintained implementation such as MarkLLM |
+| SynthID Text | Google reference or a compatible Transformers implementation for the exact public configuration |
+| Distortion-free schemes | Compatible Kuditipudi/Christ-style implementation |
+| Semantic schemes | Named SemStamp, SIR/SemaMark, or PostMark configuration |
+| Learned AI-text detection | At least one independently trained detector with a defined operating point |
+| Retrieval provenance | Provider-held generation corpus; report as provenance, not a removable text signal |
 
-For each: calibrate initial watermark strength, evaluate 100–2,000 token lengths,
-report confidence intervals, and pair every detection result with
-semantic/factual quality results. The harness requires at least 20 expected
-tail events in both matched-null samples and independent clusters for a stable
-empirical estimate: 20,000 at 0.1% FPR and 2,000,000 at 1e-5 FPR. Smaller
-populations may establish only threshold estimability, not stable-tail evidence;
-a separately justified exact null distribution is the alternative.
+For each claimed configuration:
 
-## Quality upgrades for consequential deployments
+1. Freeze prompts, models, tokenizers, keys, thresholds, strategies, quality
+   checks, and comparator versions before the final run.
+2. Separate calibration, development, and final-test data.
+3. Match controls by generator, decoding settings, domain, language, and
+   detector-token length.
+4. Include 100–2,000 token length bands and report every failure and abstention
+   in the denominator.
+5. Report fixed-false-positive-rate detection results with confidence
+   intervals, plus factual, semantic, formatting, and task checks.
+6. Test held-out keys or configurations where the threat model permits it.
+7. Use a frozen comparator registry and a multiple-comparison-aware analysis.
+8. Have an independent operator replay and publish the content-free evidence
+   bundle.
 
-The dependency-free gates catch catastrophic corruption. Higher-stakes use can
-now configure fail-closed bidirectional NLI, claim extraction plus QA
-consistency, entity linking, citation grounding, task contracts,
-code/markup-aware protection, blinded human review, and a judge independent of
-the rewrite model. These are intentionally pluggable evaluation concerns rather
-than hard dependencies of the text-cleaning core; public claims still require
-calibrated reference configurations and human validation.
+The evaluation harness can validate the matrix, assemble content-free
+observations, compute fixed-FPR cluster results, record resource use, prepare
+blinded-review material, and replay evidence. Those tools do not create the
+required datasets, detector access, human judgments, or compute.
 
-## Protocol-closure evidence work
+At very low false-positive rates, sample size matters. With zero observed false
+positives, the approximate 95% upper bound is `3/n`. A stable empirical estimate
+therefore needs enough independent null samples for the claimed operating point,
+or a separately justified exact null distribution.
 
-The source tree now contains the canonical registries, full-matrix validator,
-content-free observation assembler, fixed-FPR cluster inference, blinded-review
-packet tooling, resource accounting, immutable evidence/replay CLI, and
-replication schema. Those code paths close the tooling gaps; they do not create
-the real data or evidence. The following experiments and independent work
-remain before this repository can publish a protocol-complete comparison:
+## Remaining product work
 
-1. **Publish the multilingual matrix:** supply independently reviewed prompts
-   and matched controls for another Latin-script language, Arabic or Persian,
-   an Indic language, Chinese, and Korean. Record language, script, locale,
-   tokenizer, and detector-token length per sample; report every stratum,
-   including failures and abstentions.
-2. **Populate the canonical task registry:** supply factual QA, summarization,
-   translation, code, mathematics, and structured-data inputs plus the
-   registered correctness checks. The assembler already refuses incomplete
-   final-test task/language/length/control cells.
-3. **Publish a human-control selection manifest:** construct
-   license-compatible, time-matched, domain-matched human controls that never
-   pass through the generator or rewrite model. Publish selection rules and
-   document contamination and memorization risks without redistributing
-   restricted text.
-4. **Run blinded review:** use the implemented consent-gated packet/key split,
-   collect semantic, factual, fluency, and formatting judgments, and publish
-   only its content-free agreement manifest. Human review supplements task
-   checks; it does not replace them.
-5. **Execute held-out-key evaluation:** register disjoint tuning and final-test
-   keys or configurations for every key-based scheme. Attacks, thresholds,
-   prompts, and model selection must be frozen before final keys are revealed.
-   Known-key and held-out-key results must be reported separately.
-6. **Execute reference and cross-detector runs:** pin independent adapters for
-   each claimed scheme, run the registered cross-detector matrix, and publish
-   content-addressed manifests plus aggregate JSON. Internal reference schemes
-   remain development fixtures, not external validation.
-7. **Obtain independent replication:** have a separate operator use
-   `dewatermark-evidence replay`, publish the reproduced bundle, and attach a
-   cross-bound replication record. A detached signature digest may be declared,
-   but signature verification remains the publisher's external responsibility.
-   Do this before comparative language. “Best” additionally requires a frozen
-   comparator registry and multiplicity-aware analysis.
+- Publish a licensed multilingual and multi-domain matrix, including code,
+  mathematics, factual QA, summarization, translation, and structured data.
+- Publish matched human-control selection rules and contamination risks without
+  redistributing restricted text.
+- Run blinded human review alongside automated task checks.
+- Execute known-key, held-out-key, reference-detector, and cross-detector runs
+  as separate results.
+- Obtain an independent replay before using comparative language.
 
-Progress against these items should be reflected in the compliance matrix in
-[`BENCHMARK_PROTOCOL.md`](BENCHMARK_PROTOCOL.md). A code path counts as
-implemented coverage; only a completed, inspectable run counts as evidence.
+Track protocol coverage in [Benchmark protocol](BENCHMARK_PROTOCOL.md). An
+implemented code path counts as tooling. Only a completed, inspectable run
+counts as evidence.
 
 ## Comparison boundary
 
-`guillaumemeyer/watermarks-remover` has a substantially broader product surface:
-file routing, image regeneration, C2PA/EXIF/XMP/document metadata, an HTTP
-service, Docker images, and operational hardening. This package is designed to
-be deeper specifically on statistical text attacks and defensible measurement.
-It should not claim overall superiority without implementing and testing those
-non-text capabilities too.
+`guillaumemeyer/watermarks-remover` covers more than text: file routing, image
+regeneration, C2PA/EXIF/XMP/document metadata, an HTTP service, Docker images,
+and operational deployment features. This project now goes deeper on named
+statistical text detectors, constrained candidate search, held-out
+verification, exact rollback, and reproducible measurement. That difference is
+a product focus, not proof of better removal. Comparative claims require the
+frozen benchmark above.

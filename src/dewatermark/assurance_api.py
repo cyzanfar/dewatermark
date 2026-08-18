@@ -47,12 +47,15 @@ _PUBLIC_CAPABILITY_METADATA = {
     "license",
     "minimum_effective_tokens",
     "score_direction",
+    "secret_binding",
     "source",
     "source_status",
     "status",
     "threat_models",
     "threshold",
+    "threshold_operator",
     "tokenizer_revision",
+    "watermark_target_sha256",
 }
 _CAPABILITY_FIELDS = {
     "identifier",

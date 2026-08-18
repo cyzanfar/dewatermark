@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/benchmark-protocol-manifest-v1.json",
+  "title": "Dewatermark real benchmark protocol manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "protocol_id",
+    "classification",
+    "watermark_family",
+    "protocol_registry_sha256",
+    "comparator_registry_sha256",
+    "requested_fprs",
+    "sample_design",
+    "analysis",
+    "execution_requirements"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "protocol_id": { "$ref": "#/$defs/publicId" },
+    "classification": { "const": "real_protocol_preregistration_no_results" },
+    "watermark_family": { "const": "kgw" },
+    "protocol_registry_sha256": { "$ref": "#/$defs/sha256" },
+    "comparator_registry_sha256": { "$ref": "#/$defs/sha256" },
+    "requested_fprs": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+    },
+    "sample_design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "split_ids",
+        "cohort_ids",
+        "task_ids",
+        "language_ids",
+        "length_bin_ids",
+        "split_disjoint_keys_required",
+        "matched_decoding_required",
+        "human_controls_required",
+        "detector_effective_lengths_required"
+      ],
+      "properties": {
+        "split_ids": { "type": "array", "items": { "$ref": "#/$defs/publicId" } },
+        "cohort_ids": { "type": "array", "items": { "$ref": "#/$defs/publicId" } },
+        "task_ids": { "type": "array", "items": { "$ref": "#/$defs/publicId" } },
+        "language_ids": { "type": "array", "items": { "$ref": "#/$defs/publicId" } },
+        "length_bin_ids": { "type": "array", "items": { "$ref": "#/$defs/publicId" } },
+        "split_disjoint_keys_required": { "const": true },
+        "matched_decoding_required": { "const": true },
+        "human_controls_required": { "const": true },
+        "detector_effective_lengths_required": { "const": true }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_endpoint",
+        "threshold_source",
+        "uncertainty_unit",
+        "multiple_comparison_method",
+        "comparison_control_condition_id"
+      ],
+      "properties": {
+        "primary_endpoint": { "const": "detector_scoped_gate_success_rate_over_all_attempts" },
+        "threshold_source": { "const": "disjoint_calibration_matched_generator_nulls" },
+        "uncertainty_unit": { "const": "prompt_or_document_cluster" },
+        "multiple_comparison_method": { "const": "holm_bonferroni_cluster_paired_sign_test" },
+        "comparison_control_condition_id": { "$ref": "#/$defs/publicId" }
+      }
+    },
+    "execution_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_detector_bound_to_generator_configuration",
+        "cross_detector_required",
+        "quality_and_task_checks_required",
+        "failure_and_abstention_denominator",
+        "content_free_public_artifacts",
+        "network_requires_explicit_opt_in",
+        "model_download_requires_explicit_opt_in",
+        "private_key_slot_echo_required",
+        "exact_pair_seed_required",
+        "exact_pair_decoding_commitment_required",
+        "static_cross_detector_alias_rejection_required",
+        "cluster_level_paired_inference_required",
+        "hash_chained_checkpoint_required",
+        "run_wide_budgets_required"
+      ],
+      "properties": {
+        "primary_detector_bound_to_generator_configuration": { "const": true },
+        "cross_detector_required": { "const": true },
+        "quality_and_task_checks_required": { "const": true },
+        "failure_and_abstention_denominator": { "const": "all_attempts" },
+        "content_free_public_artifacts": { "const": true },
+        "network_requires_explicit_opt_in": { "const": true },
+        "model_download_requires_explicit_opt_in": { "const": true },
+        "private_key_slot_echo_required": { "const": true },
+        "exact_pair_seed_required": { "const": true },
+        "exact_pair_decoding_commitment_required": { "const": true },
+        "static_cross_detector_alias_rejection_required": { "const": true },
+        "cluster_level_paired_inference_required": { "const": true },
+        "hash_chained_checkpoint_required": { "const": true },
+        "run_wide_budgets_required": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "publicId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]*$"
+    }
+  }
+}

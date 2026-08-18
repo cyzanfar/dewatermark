@@ -24,7 +24,7 @@ inspect -> classify -> plan -> transform -> verify -> attest
 
 All active text-receiving extensions must provide a static capability manifest
 before construction or text access. Plans bind the active registration plus a
-process-keyed fingerprint of observable class, instance, default, closure, and
+deterministic one-way fingerprint of observable class, instance, default, closure, and
 capability state. The binding is checked again immediately before first use;
 replacement or observable mutation requires re-registration/replanning. This
 guards cooperative policy and consent; opaque state, races after validation,
@@ -33,8 +33,9 @@ sandbox boundary.
 
 ## Detection states
 
-- `detected`: evidence exceeded a named detector's registered threshold.
-- `not_detected`: evidence did not exceed that threshold. This does not mean
+- `detected`: evidence was on the positive side of a named detector's registered
+  decision boundary.
+- `not_detected`: evidence was on the clear side of that boundary. This does not mean
   human-authored or watermark-free.
 - `insufficient_evidence`: the text did not contain enough effective detector
   tokens or calibration was inadequate.
@@ -48,11 +49,11 @@ sandbox boundary.
 - `unchanged`: no accepted edit was made.
 - `unicode_sanitized`: contextual Unicode edits were applied and re-inspected.
 - `mitigation_verified`: a named detector was positive before transformation,
-  below its registered threshold afterward, and all configured quality gates
-  passed.
+  clear at its registered decision boundary afterward, and all required quality
+  gates passed.
 - `mitigation_unverified`: an accepted experimental transformation was applied,
   but compatible independent verification was unavailable.
-- `rejected_quality`: candidates were generated but none passed every gate.
+- `rejected_quality`: candidates were generated but none passed every required gate.
 - `unsupported_scheme`: the requested claim cannot currently be tested.
 - `failed`: processing failed without an accepted result.
 
@@ -108,7 +109,7 @@ Receipts are JSON-compatible and contain no source text by default. They record:
 - hashed model identifiers and detector/tokenizer revisions when declared;
 - detector configuration fingerprints without secret key material;
 - score, threshold, calibration metadata, and effective token count when reported;
-- every quality-gate outcome and protected-span check;
+- every required and advisory quality-gate outcome and protected-span check;
 - privacy consent and whether network or model acquisition occurred;
 - remote-call, generated-token, latency, and candidate budgets;
 - random seed, policy fingerprint, warnings, rejected-candidate reasons, and

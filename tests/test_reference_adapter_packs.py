@@ -43,10 +43,26 @@ def test_kgw_adapter_configuration_and_capability_are_content_addressed():
     assert capability["independent"] is True
     assert capability["calibrated"] is False
     assert capability["metadata"]["production_detection"] is False
+    assert capability["metadata"]["threshold_operator"] == ">"
     assert capability["metadata"]["vendor_equivalent"] is False
     assert capability["metadata"]["golden_conformance"]["passed"] is True
     vector_sha256 = hashlib.sha256((KGW / "fixture-cases.json").read_bytes()).hexdigest()
     assert capability["metadata"]["golden_conformance"]["vectors_sha256"] == vector_sha256
+    vectors = json.loads((KGW / "fixture-cases.json").read_text(encoding="utf-8"))["vectors"]
+    checked_report = {
+        "cases": [{"mismatches": [], "name": vector["name"], "passed": True} for vector in vectors],
+        "configuration_sha256": declared,
+        "passed": True,
+        "protocol_version": "1.1",
+        "vectors_sha256": vector_sha256,
+    }
+    report_bytes = (json.dumps(checked_report, ensure_ascii=True, sort_keys=True) + "\n").encode(
+        "ascii"
+    )
+    assert (
+        capability["metadata"]["golden_conformance"]["report_sha256"]
+        == hashlib.sha256(report_bytes).hexdigest()
+    )
 
     static = CapabilityManifest(
         identifier=capability["identifier"],
@@ -105,7 +121,7 @@ def test_kgw_adapter_invokes_injected_upstream_detector_without_copied_algorithm
     text = " ".join(f"t{index}" for index in range(40))
     response = adapter.handle(
         {
-            "protocol_version": "1.0",
+            "protocol_version": "1.1",
             "action": "detect",
             "detector": configuration["identifier"],
             "configuration_sha256": configuration["configuration_sha256"],
@@ -130,7 +146,7 @@ def test_kgw_adapter_abstains_on_natural_text_without_loading_upstream(monkeypat
     )
     response = adapter.handle(
         {
-            "protocol_version": "1.0",
+            "protocol_version": "1.1",
             "action": "detect",
             "detector": configuration["identifier"],
             "configuration_sha256": configuration["configuration_sha256"],
@@ -142,6 +158,45 @@ def test_kgw_adapter_abstains_on_natural_text_without_loading_upstream(monkeypat
     )
     assert response["status"] == "unsupported"
     assert response["reason_code"] == "token_fixture_only"
+
+
+def test_kgw_adapter_uses_pinned_upstream_strict_threshold_edge(monkeypatch):
+    adapter = _load_adapter()
+    configuration = adapter._load_configuration(KGW / "adapter-config.json")
+
+    class FakeDetector:
+        def __init__(self, **_kwargs):
+            pass
+
+        def detect(self, **_kwargs):
+            return {"z_score": 4.0, "p_value": 0.0001, "num_tokens_scored": 39}
+
+    fake = SimpleNamespace(
+        WatermarkDetector=FakeDetector,
+        torch=SimpleNamespace(
+            __version__="2.4.1",
+            device=lambda value: value,
+            long="long",
+            tensor=lambda values, dtype: values,
+        ),
+    )
+    monkeypatch.setattr(adapter, "_load_upstream", lambda *_args: fake)
+    text = " ".join(f"t{index}" for index in range(40))
+    response = adapter.handle(
+        {
+            "protocol_version": "1.1",
+            "action": "detect",
+            "detector": configuration["identifier"],
+            "configuration_sha256": configuration["configuration_sha256"],
+            "policy": {"allow_network": False, "allow_model_download": False},
+            "text": text,
+        },
+        configuration=configuration,
+        upstream_dir=Path("unused"),
+    )
+    assert response["score"] == response["threshold"] == 4.0
+    assert response["threshold_operator"] == ">"
+    assert response["status"] == "not_detected"
 
 
 def test_synthid_pack_is_explicitly_an_incomplete_nonproduction_template():
@@ -163,7 +218,10 @@ def test_pack_api_lists_reads_and_materializes_without_overwrite(tmp_path):
     listed = {item["name"]: item for item in list_adapter_packs()}
     assert listed["kgw"]["production_detection"] is False
     assert listed["synthid"]["calibrated"] is False
+    assert listed["unigram"]["calibrated"] is False
+    assert listed["unigram"]["production_detection"] is False
     assert adapter_pack_manifest("kgw")["metadata"]["source_revision"]
+    assert adapter_pack_manifest("unigram")["metadata"]["source_revision"]
 
     destination = tmp_path / "kgw-pack"
     created = materialize_adapter_pack("kgw", destination)

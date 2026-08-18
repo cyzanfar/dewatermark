@@ -5,8 +5,10 @@ from types import SimpleNamespace
 
 import evidence
 import pytest
+from comparisons import comparator_registry_sha256, load_comparator_registry
 from evidence import (
     EvidenceValidationError,
+    _validate_public_results,
     artifact_descriptor,
     create_bundle,
     create_reference_bundle,
@@ -15,19 +17,50 @@ from evidence import (
     read_bundle,
     replay_bundle,
     reproduction_descriptor,
+    results_identity,
     validate_bundle,
     validate_replication_record,
     verified_claim_eligibility,
     write_bundle,
 )
 from jsonschema import Draft202012Validator
+from observations import finalize_observation_set
 from protocol import load_protocol_registry
 from public_codes import COVERAGE_COMPLETE_REASON_CODES_BY_AREA
+from reference_run import (
+    reference_observation_set,
+    reference_sample_registry,
+    write_reference_protocol_run,
+)
 from resources import zero_network_telemetry
 
 
 def _digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _write_public_json(path, value):
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_comparator_bound_reference(directory):
+    samples = reference_sample_registry()
+    observations = reference_observation_set(samples)
+    comparator = load_comparator_registry()
+    observations["run_manifest"]["comparator_registry_sha256"] = comparator_registry_sha256(
+        comparator
+    )
+    observations = finalize_observation_set(observations)
+    sample_path = directory / "sample-registry.json"
+    observation_path = directory / "observations.json"
+    comparator_path = directory / "comparator-registry.json"
+    _write_public_json(sample_path, samples)
+    _write_public_json(observation_path, observations)
+    _write_public_json(comparator_path, comparator)
+    return sample_path, observation_path, comparator_path
 
 
 def test_reference_bundle_is_deterministic_content_addressed_and_non_claiming(tmp_path):
@@ -155,6 +188,16 @@ def test_bundle_refuses_content_credentials_and_omitted_coverage():
     [
         ("note", "raw source prose under a benign-looking field", "unregistered field"),
         ("run_id", "sk-live-DEMO-private-credential", "private-looking value"),
+        (
+            "classification",
+            "xoxb-" + "123456789012-123456789012-abcdefghijklmnopqrstuvwx",
+            "private-looking value",
+        ),
+        (
+            "classification",
+            "eyJabcdefghijk.abcdefghijk.abcdefghijk",
+            "private-looking value",
+        ),
     ],
 )
 def test_bundle_manifest_rejects_unregistered_fields_and_private_values(field, value, message):
@@ -187,6 +230,31 @@ def test_bundle_results_use_a_closed_recursive_public_vocabulary():
             )
 
 
+@pytest.mark.parametrize(
+    "comparative",
+    (
+        {},
+        {
+            "method": "holm_bonferroni_exact_mcnemar",
+            "alpha": -999,
+            "tested_hypotheses": -5,
+        },
+    ),
+)
+def test_public_results_reject_malformed_or_unsupported_comparative_analysis(comparative):
+    with pytest.raises(EvidenceValidationError, match="comparative analysis"):
+        _validate_public_results({"comparative_analysis": comparative})
+
+
+def test_public_results_bind_the_aggregate_identity_to_exact_content():
+    results = {"classification": "synthetic_fixture", "failures": 0}
+    results["aggregate_sha256"] = results_identity(results)
+    _validate_public_results(results)
+    results["failures"] = 1
+    with pytest.raises(EvidenceValidationError, match="aggregate content digest"):
+        _validate_public_results(results)
+
+
 def test_artifact_digest_and_path_are_verified(tmp_path):
     aggregate = tmp_path / "aggregate.json"
     aggregate.write_text('{"aggregate":true}\n', encoding="utf-8")
@@ -215,6 +283,379 @@ def test_artifact_digest_and_path_are_verified(tmp_path):
     unregistered.write_text('{"aggregate":true,"note":"raw source prose"}\n', encoding="utf-8")
     with pytest.raises(EvidenceValidationError, match="registered public contract"):
         artifact_descriptor(unregistered, root=tmp_path)
+
+
+def test_observation_artifact_error_registry_is_strict_only_for_contract_1_1(tmp_path):
+    samples = reference_sample_registry()
+    observations = reference_observation_set(samples)
+    row = observations["observations"][0]
+    row.update(
+        transformation_state="failed",
+        quality_gate_passed=None,
+        task_check_passed=None,
+        error_class="TimeoutError",
+    )
+    observations = finalize_observation_set(observations)
+    path = tmp_path / "strict-observations.json"
+    _write_public_json(path, observations)
+
+    with pytest.raises(EvidenceValidationError, match="registered host code"):
+        artifact_descriptor(path, root=tmp_path)
+
+    legacy = dict(observations)
+    legacy["run_manifest"] = dict(observations["run_manifest"])
+    for field in (
+        "aggregation_contract_version",
+        "bootstrap_replicates_count",
+        "bootstrap_seed_count",
+    ):
+        legacy["run_manifest"].pop(field)
+    legacy = finalize_observation_set(legacy)
+    legacy_path = tmp_path / "legacy-observations.json"
+    _write_public_json(legacy_path, legacy)
+
+    assert artifact_descriptor(legacy_path, root=tmp_path)["canonical_sha256"]
+
+
+def test_bundle_rejects_a_disconnected_sample_observation_result_graph(tmp_path):
+    write_reference_protocol_run(tmp_path)
+    sample_path = tmp_path / "sample-registry.json"
+    observation_path = tmp_path / "observations.json"
+    bundle = json.loads((tmp_path / "evidence.json").read_text(encoding="utf-8"))
+    sample_registry = json.loads(sample_path.read_text(encoding="utf-8"))
+
+    foreign_registry = json.loads(json.dumps(sample_registry))
+    foreign_registry["freeze_record_sha256"] = _digest("foreign-freeze-record")
+    foreign_observations = reference_observation_set(foreign_registry)
+    observation_path.write_text(
+        json.dumps(foreign_observations, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+    mixed_results = dict(bundle["results"])
+    mixed_results["observation_set_id"] = foreign_observations["observation_set_id"]
+    mixed_results["aggregate_sha256"] = results_identity(mixed_results)
+    mixed = create_bundle(
+        purpose=bundle["purpose"],
+        manifest=bundle["manifest"],
+        protocol_coverage=bundle["protocol_coverage"],
+        results=mixed_results,
+        resource_telemetry=bundle["resource_telemetry"],
+        reproduction=bundle["reproduction"],
+        artifacts=[
+            artifact_descriptor(sample_path, root=tmp_path),
+            artifact_descriptor(observation_path, root=tmp_path),
+        ],
+        sample_registry_sha256=bundle["sample_registry"]["sha256"],
+        sample_count=bundle["sample_registry"]["sample_count"],
+    )
+    with pytest.raises(EvidenceValidationError, match="artifact graph is inconsistent"):
+        validate_bundle(mixed, artifact_root=tmp_path)
+
+
+def test_bundle_rejects_forged_result_graph_identities(tmp_path):
+    write_reference_protocol_run(tmp_path)
+    bundle = json.loads((tmp_path / "evidence.json").read_text(encoding="utf-8"))
+    sample_path = tmp_path / "sample-registry.json"
+    observation_path = tmp_path / "observations.json"
+    descriptors = [
+        artifact_descriptor(sample_path, root=tmp_path),
+        artifact_descriptor(observation_path, root=tmp_path),
+    ]
+    forged_results = dict(bundle["results"])
+    forged_results["sample_registry_sha256"] = "f" * 64
+    forged_results["aggregate_sha256"] = results_identity(forged_results)
+    with pytest.raises(EvidenceValidationError, match="another sample registry"):
+        create_bundle(
+            purpose=bundle["purpose"],
+            manifest=bundle["manifest"],
+            protocol_coverage=bundle["protocol_coverage"],
+            results=forged_results,
+            resource_telemetry=bundle["resource_telemetry"],
+            reproduction=bundle["reproduction"],
+            artifacts=descriptors,
+            sample_registry_sha256=bundle["sample_registry"]["sha256"],
+            sample_count=bundle["sample_registry"]["sample_count"],
+        )
+
+    forged_results = dict(bundle["results"])
+    forged_results["observation_set_id"] = "f" * 64
+    forged_results["aggregate_sha256"] = results_identity(forged_results)
+    forged = create_bundle(
+        purpose=bundle["purpose"],
+        manifest=bundle["manifest"],
+        protocol_coverage=bundle["protocol_coverage"],
+        results=forged_results,
+        resource_telemetry=bundle["resource_telemetry"],
+        reproduction=bundle["reproduction"],
+        artifacts=descriptors,
+        sample_registry_sha256=bundle["sample_registry"]["sha256"],
+        sample_count=bundle["sample_registry"]["sample_count"],
+    )
+    with pytest.raises(EvidenceValidationError, match="artifact graph is inconsistent"):
+        validate_bundle(forged, artifact_root=tmp_path)
+
+
+def test_bound_aggregate_is_recomputed_and_coverage_cannot_be_laundered(tmp_path):
+    write_reference_protocol_run(tmp_path)
+    bundle = json.loads((tmp_path / "evidence.json").read_text(encoding="utf-8"))
+    descriptors = [
+        artifact_descriptor(tmp_path / "sample-registry.json", root=tmp_path),
+        artifact_descriptor(tmp_path / "observations.json", root=tmp_path),
+    ]
+
+    forged_results = json.loads(json.dumps(bundle["results"]))
+    group = next(iter(forged_results["groups"].values()))
+    group["attempt_outcomes"]["accepted"] = 999
+    forged_results["aggregate_sha256"] = results_identity(forged_results)
+    forged = create_bundle(
+        purpose=bundle["purpose"],
+        manifest=bundle["manifest"],
+        protocol_coverage=bundle["protocol_coverage"],
+        results=forged_results,
+        resource_telemetry=bundle["resource_telemetry"],
+        reproduction=bundle["reproduction"],
+        artifacts=descriptors,
+        sample_registry_sha256=bundle["sample_registry"]["sha256"],
+        sample_count=bundle["sample_registry"]["sample_count"],
+    )
+    with pytest.raises(EvidenceValidationError, match="do not reproduce"):
+        validate_bundle(forged, artifact_root=tmp_path)
+
+    forged_coverage = json.loads(json.dumps(bundle["protocol_coverage"]))
+    forged_coverage["detector_statistics"] = {
+        "state": "complete",
+        "reason": "fixed_fpr_stable_independent_complete",
+    }
+    forged = create_bundle(
+        purpose=bundle["purpose"],
+        manifest=bundle["manifest"],
+        protocol_coverage=forged_coverage,
+        results=bundle["results"],
+        resource_telemetry=bundle["resource_telemetry"],
+        reproduction=bundle["reproduction"],
+        artifacts=descriptors,
+        sample_registry_sha256=bundle["sample_registry"]["sha256"],
+        sample_count=bundle["sample_registry"]["sample_count"],
+    )
+    with pytest.raises(EvidenceValidationError, match="coverage does not match"):
+        validate_bundle(forged, artifact_root=tmp_path)
+
+    report = validate_bundle(bundle, artifact_root=tmp_path)
+    assert report["aggregate_verified"] is True
+
+
+def test_assemble_inherits_bound_bootstrap_settings_and_rejects_overrides(
+    tmp_path, monkeypatch, capsys
+):
+    write_reference_protocol_run(tmp_path)
+    sample_path = tmp_path / "sample-registry.json"
+    observation_path = tmp_path / "observations.json"
+    output_path = tmp_path / "assembled.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+    main()
+    capsys.readouterr()
+    assembled = read_bundle(output_path)
+    assert assembled["manifest"]["bootstrap_replicates_count"] == 50
+    assert assembled["manifest"]["bootstrap_seed_count"] == 0
+
+    mismatch_path = tmp_path / "mismatched-bootstrap.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--output",
+            str(mismatch_path),
+            "--bootstrap-replicates",
+            "51",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert not mismatch_path.exists()
+
+
+def test_assemble_uses_legacy_bootstrap_defaults(tmp_path, monkeypatch, capsys):
+    import observations as observation_module
+
+    samples = reference_sample_registry()
+    observations = reference_observation_set(samples)
+    for field in (
+        "aggregation_contract_version",
+        "bootstrap_replicates_count",
+        "bootstrap_seed_count",
+    ):
+        observations["run_manifest"].pop(field)
+    observations = finalize_observation_set(observations)
+    sample_path = tmp_path / "sample-registry.json"
+    observation_path = tmp_path / "observations.json"
+    output_path = tmp_path / "legacy-assembled.json"
+    _write_public_json(sample_path, samples)
+    _write_public_json(observation_path, observations)
+
+    captured = {}
+    real_aggregate = observation_module.aggregate_observation_set
+
+    def capture_aggregate(value, sample_registry, **kwargs):
+        captured.update(kwargs)
+        return real_aggregate(value, sample_registry, **kwargs)
+
+    monkeypatch.setattr(observation_module, "aggregate_observation_set", capture_aggregate)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+    main()
+    capsys.readouterr()
+    assert captured["bootstrap_replicates"] == 500
+    assert captured["bootstrap_seed"] == 0
+    read_bundle(output_path)
+
+
+def test_assemble_requires_matching_bound_comparator_and_publishes_its_artifact(
+    tmp_path, monkeypatch, capsys
+):
+    sample_path, observation_path, comparator_path = _write_comparator_bound_reference(tmp_path)
+
+    missing_path = tmp_path / "missing-comparator.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--output",
+            str(missing_path),
+        ],
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert not missing_path.exists()
+    capsys.readouterr()
+
+    mismatched_comparator = load_comparator_registry(comparator_path)
+    mismatched_comparator["registry_id"] = "dewatermark-comparators-v1-mismatch"
+    mismatched_path = tmp_path / "mismatched-comparator.json"
+    _write_public_json(mismatched_path, mismatched_comparator)
+    mismatch_output = tmp_path / "mismatched-comparator-evidence.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--comparator-registry",
+            str(mismatched_path),
+            "--output",
+            str(mismatch_output),
+        ],
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert not mismatch_output.exists()
+    capsys.readouterr()
+
+    output_path = tmp_path / "comparator-evidence.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--comparator-registry",
+            str(comparator_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+    main()
+    capsys.readouterr()
+    assembled = read_bundle(output_path)
+    assert "comparative_analysis" in assembled["results"]
+    assert {item["path"] for item in assembled["artifacts"]} == {
+        sample_path.name,
+        observation_path.name,
+        comparator_path.name,
+    }
+    assert validate_bundle(assembled, artifact_root=tmp_path)["artifact_count"] == 3
+
+
+def test_strict_bundle_rejects_stripped_comparator_analysis_and_artifact(
+    tmp_path, monkeypatch, capsys
+):
+    sample_path, observation_path, comparator_path = _write_comparator_bound_reference(tmp_path)
+    output_path = tmp_path / "comparator-evidence.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "dewatermark-evidence",
+            "assemble",
+            "--sample-registry",
+            str(sample_path),
+            "--observations",
+            str(observation_path),
+            "--comparator-registry",
+            str(comparator_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+    main()
+    capsys.readouterr()
+    assembled = read_bundle(output_path)
+    stripped_results = json.loads(json.dumps(assembled["results"]))
+    stripped_results.pop("comparative_analysis")
+    stripped_results["aggregate_sha256"] = results_identity(stripped_results)
+    comparator_digest = assembled["manifest"]["comparator_registry_sha256"]
+    stripped_artifacts = [
+        item for item in assembled["artifacts"] if item["canonical_sha256"] != comparator_digest
+    ]
+    with pytest.raises(EvidenceValidationError, match="declaration and analysis"):
+        create_bundle(
+            purpose=assembled["purpose"],
+            manifest=assembled["manifest"],
+            protocol_coverage=assembled["protocol_coverage"],
+            results=stripped_results,
+            resource_telemetry=assembled["resource_telemetry"],
+            reproduction=assembled["reproduction"],
+            artifacts=stripped_artifacts,
+            sample_registry_sha256=assembled["sample_registry"]["sha256"],
+            sample_count=assembled["sample_registry"]["sample_count"],
+        )
 
 
 def test_replay_is_plan_only_by_default_and_execution_scrubs_secrets(tmp_path, monkeypatch):
@@ -396,6 +837,34 @@ def test_replication_is_cross_bound_and_independence_fails_closed():
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "secret"),
+    (
+        ("disclosure", "sk-live-PRIVATEREPLICATIONDISCLOSURE123456789"),
+        ("operator_id", "eyJabcdefghijk.abcdefghijk.abcdefghijk"),
+        ("organization", "https://user:password@example.test/lab"),
+    ),
+)
+def test_replication_rejects_private_values_before_publishing(field, secret):
+    fixture = create_reference_bundle()
+    values = {
+        "source_bundle_id": fixture["bundle_id"],
+        "reproduced_bundle_id": fixture["bundle_id"],
+        "operator_id": "independent-operator",
+        "organization": "independent-lab",
+        "relationship": "independent",
+        "disclosure": "No relationship.",
+        "executed_at": "2026-08-18T12:00:00Z",
+        "environment_sha256": _digest("environment"),
+        "command_sha256": _digest("command"),
+        "outcome": "failed",
+    }
+    values[field] = secret
+    with pytest.raises(EvidenceValidationError, match="private-looking") as captured:
+        create_replication_record(**values)
+    assert secret not in str(captured.value)
+
+
 def test_frozen_complete_bundle_needs_verified_independent_replication():
     fixture = create_reference_bundle()
     complete = {
@@ -416,7 +885,7 @@ def test_frozen_complete_bundle_needs_verified_independent_replication():
         purpose="frozen_evaluation",
         manifest={"fixture_sha256": _digest("frozen")},
         protocol_coverage=complete,
-        results={"aggregate_sha256": _digest("results")},
+        results={"aggregate_sha256": results_identity({})},
         resource_telemetry=fixture["resource_telemetry"],
         reproduction=fixture["reproduction"],
     )

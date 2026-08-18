@@ -7,10 +7,10 @@ process boundary without a shell, a minimal credential-free environment,
 bounded output, and a deadline; it never opens a socket.
 
 Requirements: a Java runtime able to launch Gradle and
-`dewatermark>=0.6,<0.7` on the IDE process PATH. The checksum-pinned wrapper
+`dewatermark>=0.7,<0.8` on the IDE process PATH. The checksum-pinned wrapper
 provisions the Java 21 compile toolchain when it is not installed locally.
 
-Install the matching CLI with `pipx install 'dewatermark>=0.6,<0.7'`.
+Install the matching CLI with `pipx install 'dewatermark>=0.7,<0.8'`.
 
 ```bash
 cd integrations/jetbrains

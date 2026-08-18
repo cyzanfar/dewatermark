@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "watermark-removal-comparators-v1",
+  "classification": "frozen_comparator_preregistration_no_results",
+  "frozen": true,
+  "control_condition_id": "no_attack",
+  "analysis": {
+    "method": "holm_bonferroni_cluster_paired_sign_test",
+    "family": "detector_and_fixed_fpr",
+    "alpha": 0.05
+  },
+  "conditions": [
+    {
+      "id": "no_attack",
+      "role": "negative_control",
+      "adapter_required": false,
+      "implementation_binding": "intrinsic_identity_transform"
+    },
+    {
+      "id": "reference",
+      "role": "system_under_test",
+      "adapter_required": true,
+      "implementation_binding": "runtime_manifest_sha256_required"
+    },
+    {
+      "id": "paraphrase",
+      "role": "baseline",
+      "adapter_required": true,
+      "implementation_binding": "runtime_manifest_sha256_required"
+    },
+    {
+      "id": "bira",
+      "role": "baseline",
+      "adapter_required": true,
+      "implementation_binding": "runtime_manifest_sha256_required"
+    },
+    {
+      "id": "sira",
+      "role": "baseline",
+      "adapter_required": true,
+      "implementation_binding": "runtime_manifest_sha256_required"
+    }
+  ]
+}

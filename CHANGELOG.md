@@ -4,6 +4,111 @@ This project follows Semantic Versioning. Public changes are recorded here.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-18
+
+### Added
+
+- A request-scoped `DetectorSession` with detector-policy-and-text digest
+  caching, atomic batch scoring,
+  independent detector-query budgets, normalized score direction and p-values,
+  and held-out verification that rejects repeated detector identities.
+- Content-free signal localization using native detector spans or bounded
+  overlapping windows with family-wise p-value correction. Status-only window
+  results are explicitly exploratory.
+- A deterministic detector-guided optimizer that searches bounded candidate
+  sets, applies the central quality gates, selects the smallest passing edit,
+  requires a distinct calibrated and independent verifier, and returns the
+  exact source on every abstention or rollback.
+- Registered-provider and bounded JSON command strategy adapters. Command
+  strategies use static manifests, configuration fingerprints, strict JSON,
+  scrubbed environments, process-tree cleanup, shared resource accounting, and
+  no implicit secret channel.
+- `localize` and `mitigate` Python, CLI, HTTP/OpenAPI, and MCP operations, plus
+  public localization, mitigation, and command-strategy JSON schemas and
+  separate search-candidate and detector-query configuration limits.
+- A one-command, resumable KGW benchmark runner that builds matched registered
+  samples through bounded adapters, executes a frozen no-attack/reference/
+  paraphrase/BIRA/SIRA matrix, records gate failures and abstentions, and emits
+  strict content-free observation and evidence artifacts.
+- A frozen comparator registry, real-run KGW preregistration, private run/input
+  schemas, cluster-level paired sign inference, and fixed-family Holm
+  correction that retains unavailable preregistered hypotheses.
+- Exact, content-addressed KGW and Unigram natural-text reference configurations
+  with pinned author-source conformance, analytical length-aware evidence,
+  fail-closed closed-vocabulary fixtures, and offline operator-sealing templates
+  for arbitrary local tokenizers and out-of-band private keys. These packs remain
+  explicitly uncalibrated and non-production; the reference private-key path
+  requires verifiable owner-only POSIX permissions and fails closed on Windows.
+
+### Changed
+
+- Fixed-FPR aggregation now honors lower-is-positive detector manifests, counts
+  missing required positive observations as failed attempts, and accepts
+  detector-specific effective token counts for cross-detectors.
+- Window localization now refuses to promote an inconclusive detector result,
+  even when an extension also supplies a low p-value.
+- Held-out verification now preflights detector identity, scheme compatibility,
+  a complete static decision contract, calibration, independence, and a shared
+  `watermark_target_sha256` before any verifier receives source text. Cached
+  observations bind the exact detector policy, and policy drift fails closed.
+- Nested requests can no longer relax an outer request's network or model-
+  download consent; the active request context enforces both permissions at the
+  resource boundary.
+- Bounded detector and strategy commands now reject credential-bearing argv,
+  including secret flags, common token formats, and URL user information.
+- Public command configuration now rejects nested credential fields and values,
+  credential-bearing URLs, and local paths before computing a public digest.
+- Generic detector responses must agree with their declared scheme, score
+  direction, threshold operator, threshold, and configuration; paired verifier
+  decisions must use one unchanged decision contract.
+- Native detector spans remain exploratory unless every span has a p-value and
+  the capability declares calibrated family-wise localization error control.
+- MCP advertises the same closed, bounded localization and mitigation request
+  and result schemas as the runtime instead of permissive generic objects.
+- Command detectors can bind explicit threshold-operator, watermark-target, and
+  external-implementation digests. Held-out verification requires the complete
+  static contract and rejects launcher aliases before either command receives text.
+- KGW and Unigram packs now use opaque key IDs with owner-only structured key
+  records, strict upstream decision edges, closed-vocabulary fixture labels,
+  relative/log-scale conformance comparisons, full runtime/platform pins,
+  bounded tokenizer snapshots that reject credential-bearing filenames and
+  content before hashing, and atomic pair publication.
+- Mitigation receipts and schemas now bind detector roles, policy hashes,
+  source/candidate hashes, paired decision evidence, quality acceptance, exact
+  rollback, and a narrow claim scope before allowing a `verified` result.
+- Benchmark execution now binds matched decoding seeds and private key slots,
+  rejects aliased cross-detectors, enforces persistent run-wide budgets, keeps
+  failed attempts in denominators, validates artifacts before publication, and
+  resumes only from a strict hash-chained checkpoint.
+- Existing command-detector v1 manifests and responses remain valid for
+  ordinary detection; the new threshold-operator fields are optional at the
+  v1 boundary, while held-out verification safely abstains unless the complete
+  static decision contract is explicit.
+- Detector-session cache hits now enforce the active request deadline and
+  cancellation checkpoint before returning cached evidence.
+- Evaluation command adapters now use the same credential-bearing argv checks
+  as runtime detector and strategy adapters, while retaining operator-managed
+  secret-file references.
+- Completed benchmark resumes now bind the evidence bundle, observation set,
+  sample registry, and run identity back to the hash-chained completion record
+  before returning cached results.
+- Evaluation adapter identities, static sidecars, and runtime capability metadata
+  now reject credential-shaped values, credential-bearing URLs, and private paths
+  before public hashing or caching. Human-review and nested protocol metadata are
+  likewise validated against closed contracts before a run ID or checkpoint exists.
+- Benchmark execution now records counted cancellation checkpoints during
+  process execution, aggregation, and final publication; it enforces the
+  absolute deadline throughout and applies exact integer and total-work bounds
+  to bootstrap computation.
+- `aggregation_contract_version` 1.1 binds bootstrap settings, comparator declarations,
+  samples, observations, and public results into one reproducible graph.
+  Verification recomputes the aggregate exactly and distinguishes legacy
+  content-address validity from `aggregate_verified` statistical semantics.
+- Cluster sign-test tails now remain finite and fast for thousands of
+  discordant pairs without giant integer conversion, with a hard comparator
+  work bound. Strict 1.1 observations accept only closed host failure codes;
+  unmarked legacy v1 artifacts retain their open-token compatibility.
+
 ## [0.6.0] - 2026-08-18
 
 Version `0.5.0` was an unpublished source milestone: it was never tagged or

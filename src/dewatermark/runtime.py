@@ -111,7 +111,7 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
         "detector_capabilities": detector_capabilities,
         "detector_errors": detector_errors(),
         "assurance": {
-            "operations": ["inspect", "plan", "apply", "verify"],
+            "operations": ["inspect", "plan", "apply", "verify", "localize", "mitigate"],
             "detection_states": [
                 "detected",
                 "not_detected",
@@ -140,7 +140,25 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
                 "evidence-receipt",
                 "detector-capability",
                 "command-detector",
+                "command-strategy",
+                "localization-result",
+                "mitigation-result",
+                "benchmark-comparator-registry",
+                "benchmark-protocol-manifest",
+                "benchmark-run-config",
+                "benchmark-input-corpus",
+                "benchmark-sample-registry",
+                "benchmark-observation-set",
+                "benchmark-evidence-bundle",
+                "benchmark-replication-record",
+                "openapi",
             ],
+            "detector_guided_mitigation": {
+                "bounded_search": True,
+                "quality_gates_required": True,
+                "held_out_verifier_required": True,
+                "rollback_returns_exact_source": True,
+            },
             "detector_tooling": {
                 "operations": ["list", "doctor", "conformance"],
                 "inventory_side_effect_free": True,
@@ -174,6 +192,8 @@ def plan(
         "max_input_chars": cfg.max_input_chars,
         "max_remote_calls": cfg.max_remote_calls,
         "max_output_tokens": cfg.max_output_tokens,
+        "max_detector_queries": cfg.max_detector_queries,
+        "max_search_candidates": cfg.max_search_candidates,
     }
     if mode == "sanitize":
         return ExecutionPlan(mode, "unicode", False, False, True, limits=limits)

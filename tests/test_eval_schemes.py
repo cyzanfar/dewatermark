@@ -1,8 +1,20 @@
+import hashlib
 import sys
 from contextlib import AbstractContextManager
 from types import SimpleNamespace
 
 import schemes
+
+
+def test_public_key_partition_ids_are_random_labels_not_key_digests():
+    ids = {scheme["manifest"]["key_fingerprint"] for scheme in schemes.SCHEMES.values()}
+    assert len(ids) == len(schemes.SCHEMES)
+    assert all(len(value) == 64 and set(value) <= set("0123456789abcdef") for value in ids)
+    derived = {
+        hashlib.sha256(str(secret).encode()).hexdigest()
+        for secret in (schemes.kgw.HASH_KEY, schemes.UNIGRAM_KEY, schemes.EXP_KEY)
+    }
+    assert ids.isdisjoint(derived)
 
 
 def test_sample_seed_is_deterministic_portable_63_bit_identity():

@@ -1,0 +1,42 @@
+{
+  "description": "Natural-language vectors for one exact public Unigram reference configuration.",
+  "schema_version": "1.0",
+  "vectors": [
+    {
+      "expected_effective_tokens": 97,
+      "expected_p_value": 5.265851265926457e-36,
+      "expected_score": 12.472611504245977,
+      "expected_status": "detected",
+      "expected_z_score": 12.472611504245977,
+      "name": "natural-reference-positive",
+      "text": "Careful researchers studying language provenance design transparent experiments\nthat separate calibration, development, validation, plus final evaluation cohorts. Every generated\npassage uses documented prompts, models, tokenizers, configurations, keys, sampling parameters,\nseeds, lengths, domains, and languages. Reviewers preserve facts, entities, numbers, quotations,\ncitations, hyperlinks, formatting, structure while measuring detector scores, false positives,\nconfidence intervals, editing distance, latency, memory, calls, cost. Reproducible evidence records\nrevisions, digests, thresholds, effective tokens, failures, abstentions, controls. Independent audits\ncompare original candidates through semantic, factual, grammatical, task checks before accepting\nminimal changes. Honest reports limit conclusions to named schemes, exact settings, heldout samples.\nThis workflow."
+    },
+    {
+      "expected_effective_tokens": 97,
+      "expected_p_value": 1.0,
+      "expected_score": -12.472611504245977,
+      "expected_status": "not_detected",
+      "expected_z_score": -12.472611504245977,
+      "name": "natural-length-control",
+      "text": "Modern software teams benefit when libraries offer predictable interfaces,\nconcise guides, stable releases, further helpful diagnostics. A newcomer should install one package,\nrun small example, understand its result, then explore advanced options gradually. Contributors need\nfocused modules, deterministic tests, clear ownership boundaries, reviewable modifications alongside\nrespectful discussion. Maintainers can automate styling, typing, builds, security scans, dependency\nupdates, artifact signing with changelog preparation. Users appreciate private defaults, bounded\nresources, explicit consent, useful errors, portable commands, structured output, sensible extension\npoints. Strong projects earn trust by documenting limitations, publishing benchmarks, welcoming\nreplication, fixing mistakes quickly yet avoiding exaggerated promises."
+    },
+    {
+      "expected_effective_tokens": 46,
+      "expected_p_value": 4.04480151982802e-11,
+      "expected_score": 6.498924899144511,
+      "expected_status": "detected",
+      "expected_z_score": 6.498924899144511,
+      "name": "readable-positive-variant",
+      "text": "Independent researchers can compare detector output through reproducible tests.\nTransparent evidence uses exact configurations, sampling seeds, tokenizers, revisions, effective\ntokens, thresholds, confidence intervals, false positives, failures, abstentions, latency, and cost.\nCareful reviewers preserve facts, entities, numbers, quotations, citations, hyperlinks, formatting,\nplus structure before accepting minimal changes."
+    },
+    {
+      "expected_effective_tokens": 1,
+      "expected_p_value": null,
+      "expected_score": null,
+      "expected_status": "insufficient_evidence",
+      "expected_z_score": null,
+      "name": "natural-short-abstention",
+      "text": "careful"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-# dewatermark — Text Watermark Remover for Hidden Unicode
+# dewatermark — Verification-first text watermark remover
 
 [![PyPI version](https://img.shields.io/pypi/v/dewatermark.svg)](https://pypi.org/project/dewatermark/)
 [![Python versions](https://img.shields.io/pypi/pyversions/dewatermark.svg)](https://pypi.org/project/dewatermark/)
@@ -6,10 +6,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/cyzanfar/text-watermark-remover/blob/main/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/cyzanfar/text-watermark-remover?style=social)](https://github.com/cyzanfar/text-watermark-remover/stargazers)
 
-`dewatermark` is a Python text watermark remover for suspicious hidden Unicode
-characters. It can clean one string or scan a whole repository. Basic cleanup
-runs locally, gives the same result every time, and needs no model or network
-connection.
+`dewatermark` removes suspicious hidden Unicode and helps test known statistical
+text watermarks. It can clean one string, scan a repository, locate a detector
+signal, or search for the smallest rewrite that clears named detectors. Basic
+Unicode cleanup runs locally, gives the same result every time, and needs no
+model or network connection.
 
 For statistical LLM watermarks, it can run experiments and check the result
 with a detector built for that watermark. It never treats changed text as proof
@@ -29,6 +30,10 @@ analysis, repository scanning, and the CLI:
 python -m pip install dewatermark
 dewatermark --version
 ```
+
+> **Current release:** This page documents `0.7.0`, including detector
+> localization, detector-guided mitigation, and the KGW and Unigram reference
+> packs.
 
 Install optional features only when you need them:
 
@@ -96,6 +101,8 @@ changing the input. `check` scans files and changes nothing unless you pass
 | Get a JSON-ready report of what changed | `remove(..., mode="sanitize").to_dict()` |
 | Try model-backed rewriting | [Statistical LLM watermarks](#statistical-llm-watermarks-advanced) |
 | Verify a statistical watermark | [Verify with a detector](#verify-statistical-watermarks-with-a-detector) |
+| Find where a known detector sees a signal | [Locate and mitigate a known signal](#locate-and-mitigate-a-known-signal) |
+| Search for a verified, minimal rewrite | [Locate and mitigate a known signal](#locate-and-mitigate-a-known-signal) |
 | Review exact text and settings before applying | [Agents and automation](#agents-and-automation) |
 | Use editors, CI, HTTP, MCP, or Docker | [Integrations](#integrations) |
 
@@ -106,7 +113,7 @@ Unicode cleanup and statistical watermark testing are separate operations.
 | Result | Meaning |
 | --- | --- |
 | `unicode_sanitized` | Policy-covered characters were removed or normalized |
-| `mitigation_verified` | A named independent detector scored above its tested threshold before rewriting and below it afterward, and every configured quality check passed |
+| `mitigation_verified` | A named independent detector was positive before rewriting and clear afterward at its tested decision boundary, and every required quality check passed |
 | `mitigation_unverified` | Text changed and passed quality checks, but compatible verification was unavailable |
 | `unsupported_scheme` | The requested watermark cannot currently be tested |
 | `rejected_quality` | Rewritten candidates failed quality checks, so the original text was kept |
@@ -145,8 +152,9 @@ GitHub code scanning.
   `allow_remote_processing=True` is set separately.
 - The default Unicode profile preserves contextual characters. The
   `aggressive` profile may change legitimate text.
-- Model-generated rewrites are treated as candidates. They are accepted only
-  after the configured quality checks pass.
+- Model-generated rewrites are treated as candidates. Detector-guided search
+  accepts one only after quality checks and held-out verification pass; every
+  other outcome returns the exact source.
 - Errors and result receipts omit source text and credentials. Configuration
   output also hides credentials. `analyze()` intentionally returns annotated
   input, so treat its output as sensitive.
@@ -187,15 +195,53 @@ dewatermark detectors conformance
 dewatermark detectors packs
 ```
 
-The included KGW-, Unigram-, and tournament-style detectors are small test
-cases for integration code, not production detectors. The KGW pack checks known
-token examples, and the SynthID pack is only a disabled template until its
-required configuration and independent tests are supplied.
+The built-in KGW-, Unigram-, and tournament-style detectors are small test
+cases for integration code, not production detectors. The packaged KGW and
+Unigram profiles score one exact, closed-vocabulary reference configuration;
+the KGW pack also keeps its older token example. The SynthID pack is only a
+disabled template until its required configuration and independent tests are
+supplied.
 
 A passing conformance test means the integration passes its known test cases.
 It does not prove that the tool removes a production watermark. See the
 [detector guide](https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/DETECTORS.md)
 and [reference detector guide](https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/REFERENCE_DETECTORS.md).
+
+## Locate and mitigate a known signal
+
+When you have a compatible detector, `localize` finds the character ranges that
+contribute to its result. Native detector ranges are preferred. Otherwise the
+tool scans bounded, overlapping windows and adjusts the confidence threshold so
+that scanning more windows does not make a positive result easier to obtain.
+Only a calibrated detector with compatible p-values and declared family-wise
+error control can produce a confirmatory `localized` result. Other ranges are
+labeled `localized_exploratory`: useful editing hints, not verification.
+
+```bash
+dewatermark localize --input input.txt --detector your-primary-detector
+```
+
+`mitigate` tries bounded candidate-generation strategies and ranks only
+candidates that pass the central quality checks. It returns changed text only
+when the primary detector clears and another calibrated, independent detector
+that was not used to guide the search also clears. Every other outcome returns
+the exact original text.
+
+```bash
+dewatermark mitigate \
+  --input input.txt \
+  --detector your-primary-detector \
+  --verifier your-held-out-detector \
+  --strategy your-rewrite-strategy \
+  --consent
+```
+
+The detector and strategy names above are installed extensions, not bundled
+production services. The included KGW and Unigram profiles are exact, offline
+reference configurations for integration and conformance work. They are
+deliberately uncalibrated and cannot produce a production removal claim. See
+[detector-guided mitigation](https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/DETECTOR_GUIDED_MITIGATION.md)
+for the Python API, budgets, subprocess strategy protocol, and acceptance rules.
 
 ### Current Claude limitation
 

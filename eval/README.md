@@ -24,6 +24,11 @@ rate deltas at every requested fixed FPR. These intervals condition on the
 thresholds calibrated on the disjoint null split; they do not disguise that
 conditioning as full threshold-uncertainty propagation.
 
+Registered condition comparisons use a two-sided exact binomial sign test over
+independent cluster summaries, followed by the frozen Holm correction. The
+exact tail is evaluated numerically without enormous integer intermediates,
+and comparison work is bounded before it can enter a public aggregate.
+
 The built-in KGW and Unigram implementations are internal references. EXP is a
 simplified Gumbel approximation. None is independent vendor validation.
 
@@ -97,7 +102,10 @@ dewatermark-eval --schemes KGW,Unigram,EXP \
 ```
 
 Runs stop on sample failure by default. `--failure-policy continue` records
-failure classes without persisting provider messages. Every checkpoint event
+closed, host-defined failure codes without persisting provider messages or
+adapter-supplied labels. Aggregation-contract 1.1 rejects any other
+`error_class`; unmarked legacy v1 observations retain their open-token
+compatibility but are not statistically verified. Every checkpoint event
 has a content-addressed run identity over arguments, prompts, the complete
 library and evaluation source trees, canonical Unicode policy, source
 commit/dirty state, package/backend revisions, and adapter sidecar/executable
@@ -130,6 +138,70 @@ path is `dewatermark-evidence`, backed by the canonical
 `protocol-registry-v1.json` and four public JSON schemas. It does not import a
 detector or touch a model while validating or aggregating.
 
+The `run` subcommand connects execution to that strict evidence path. It uses
+the checked-in KGW preregistration and frozen comparator registry, generates
+matched marked/unmarked samples through an adapter, runs every registered
+condition and named detector, applies quality and task checks, and creates the
+sample registry, observations, aggregate, checkpoint, and evidence bundle in
+one command:
+
+```bash
+dewatermark-evidence run \
+  --run-config private-run-config.json \
+  --input-corpus private-input-corpus.json \
+  --output-directory evidence/kgw-run
+
+# Continue only the exact same scientific run after interruption.
+dewatermark-evidence run \
+  --run-config private-run-config.json \
+  --input-corpus private-input-corpus.json \
+  --output-directory evidence/kgw-run \
+  --resume
+```
+
+See [PROTOCOL_RUN.md](PROTOCOL_RUN.md) for the local config, private input, and
+adapter contracts. The command never writes raw prompts or generated text to
+the checkpoint or public artifacts. Network and model acquisition remain off
+unless their separate flags are supplied.
+
+New runs set `aggregation_contract_version: "1.1"`. It commits the bootstrap settings and
+optional comparator registry, then `verify` deterministically recomputes the
+public aggregate from the bound sample and observation artifacts. A successful
+verification reports `aggregate_verified: true`. Legacy unmarked v1 bundles
+can remain structurally and content-address valid, but report
+`aggregate_verified: false` and cannot establish a verified aggregate claim.
+
+The run config uses explicit argv arrays, private split-specific key-slot
+handles, and independent CSPRNG-generated public key-partition IDs. A public ID
+must never be derived from a key or slot; the v1 artifact field
+`key_fingerprint` is only a legacy name for that opaque ID. Run-wide limits
+cover records, requested tokens, adapter processes, cancellation checks, and
+elapsed time. Cancellation is checked before and after each adapter process, at
+throttled intervals while it runs, throughout aggregation, and again before
+publication; each actual operator callback is reserved in the hash-chained
+checkpoint first.
+The absolute deadline is rechecked after aggregation, before artifact writes,
+and before the completion record is committed. Adapters
+must echo the requested private key slot. Marked and null members of a pair must
+echo one shared seed and one exact decoding commitment.
+Before any adapter process starts, static sidecar,
+command, executable/script, implementation, configuration, model, tokenizer,
+and source digests are checked so a cross-detector cannot be registered as an
+alias of the primary detector.
+
+The resume checkpoint is hash-chained strict JSONL. It retains failed attempts,
+resource records, and budget reservations across resumes, and permits recovery
+only from a truncated final line. Comparative inference uses prompt/document
+clusters, not rows. Every registered non-control comparator remains in its Holm
+family; unavailable hypotheses are explicit non-estimable p=1 rows.
+
+Bootstrap settings are bounded deterministic integers: replicates must be from
+2 through 10,000, and the seed must be from 0 through 2^63 - 1. Booleans and
+other integer-like values are rejected. The aggregator also rejects more than
+5,000,000 row-replicate-metric work units. Lower the replicate count or shard a
+frozen matrix that would exceed that deterministic CPU bound. Contract 1.1
+reserves `::` as the unambiguous detector/condition group delimiter.
+
 ```bash
 # Offline deterministic plumbing check (synthetic scores; never efficacy evidence)
 dewatermark-evidence reference-protocol --output-directory reference-run
@@ -139,6 +211,7 @@ dewatermark-evidence verify reference-run/evidence.json
 dewatermark-evidence assemble \
   --sample-registry evidence/sample-registry.json \
   --observations evidence/observations.json \
+  --comparator-registry evidence/comparator-registry.json \
   --output evidence/evidence.json \
   --purpose frozen_evaluation
 
@@ -150,6 +223,10 @@ replay_workspace="$(mktemp -d)"
 dewatermark-evidence replay evidence/evidence.json \
   --recipe replay-recipe.json --workspace "$replay_workspace" --execute
 ```
+
+`--comparator-registry` is required when strict 1.1 observations declare
+`comparator_registry_sha256`; omit it only when the observations declare no
+comparator.
 
 `--execute` runs the digest-matched local command without a shell, with a
 scrubbed environment and bounded output/time, but it is not an operating-system

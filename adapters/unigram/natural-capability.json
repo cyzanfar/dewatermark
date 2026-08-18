@@ -1,0 +1,45 @@
+{
+  "calibrated": false,
+  "description": "Readable closed-vocabulary Unigram conformance fixture cross-conformed with the pinned author implementation; analytical threshold only, not production detection.",
+  "identifier": "reference-upstream/unigram-natural-profile-v1",
+  "independent": true,
+  "kind": "detector",
+  "metadata": {
+    "calibration": "analytical_only_not_empirically_calibrated",
+    "command_protocol_version": "1.1",
+    "configuration_sha256": "3e6f300fb62b7d7dc7c52755a35fca156a67ccfd41f36176d9c6d13c4181e646",
+    "cross_implementation_conformance": {
+      "passed": true,
+      "record_sha256": "99010f37c95bb4c24ec70214f6ae0c8fa6f07086594513a1cc309e316fdfb61e",
+      "vectors_sha256": "7b8f12c548bf987b96b615e8e98a348fb3dcdf5b9aac2dc58b701b36849fb8f9"
+    },
+    "evidence_level": "independent_detector",
+    "key_id": "39744bdf4c6b0613c6eb16fbfcc32cea",
+    "minimum_effective_tokens": 32,
+    "production_detection": false,
+    "profile_manifest_sha256": "7976334d7e800f78fd40df7247f5d28adf4064f3dbfbbb9098c0be9727c1e970",
+    "score_direction": "higher",
+    "threshold_operator": ">",
+    "source": "https://github.com/XuandongZhao/Unigram-Watermark",
+    "source_file_sha256": "2059bf7057cd66784899379ca93492dfd217ae8fb4684e4d6cb02bca4c00d3b1",
+    "source_license": "MIT",
+    "source_revision": "b96cdb4d52771e3cbd543a9d9aeeaec8d0790ca2",
+    "status": "exact_public_natural_reference_configuration",
+    "threat_models": [
+      "T2"
+    ],
+    "threshold": 2.3263478740408408,
+    "threshold_evidence_sha256": "e7a793bfaed11d7da5c4139be7d510f562be2285dea86a89960224dfd497bb76",
+    "tokenizer_sha256": "73abd255f2d86d5fb5149edf7f6458d9ef060f7cb0f6567311120ae5a94c26f8",
+    "upstream_equivalent_for_reference_configuration": true,
+    "vendor_equivalent": false
+  },
+  "minimum_characters": 0,
+  "model_download_possible": false,
+  "network_required": false,
+  "requires_secret": false,
+  "schemes": [
+    "unigram/unique-natural-reference-v1"
+  ],
+  "version": "1.0"
+}

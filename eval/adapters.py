@@ -18,13 +18,20 @@ import shlex
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from dewatermark.bounded_process import BoundedProcessFailure, run_bounded_process
+from dewatermark.command_safety import (
+    secret_file_argument_indexes,
+    validate_public_command,
+    validate_public_json,
+)
 
 try:
+    from .manifest import StrictJSONError, strict_json_loads
     from .public_codes import REPRODUCIBILITY_BLOCKER_CODES
 except ImportError:  # direct-script compatibility
+    from manifest import StrictJSONError, strict_json_loads  # type: ignore
     from public_codes import REPRODUCIBILITY_BLOCKER_CODES  # type: ignore
 
 PROTOCOL_VERSION = "1.0"
@@ -37,28 +44,98 @@ _MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 _ADAPTER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _UNRESOLVED = {"", "unknown", "unresolved", "unspecified", "latest", "none", "null"}
-_SENSITIVE_ARGUMENTS = {
-    "api_key",
-    "authorization",
-    "credential",
-    "password",
-    "private_key",
-    "secret",
-    "token",
+_SCRIPT_SUFFIXES_BY_INTERPRETER = {
+    "bash": frozenset({".bash", ".sh"}),
+    "bun": frozenset({".cjs", ".js", ".mjs", ".ts"}),
+    "dash": frozenset({".sh"}),
+    "deno": frozenset({".js", ".mjs", ".ts"}),
+    "ksh": frozenset({".ksh", ".sh"}),
+    "lua": frozenset({".lua"}),
+    "node": frozenset({".cjs", ".js", ".mjs"}),
+    "nodejs": frozenset({".cjs", ".js", ".mjs"}),
+    "perl": frozenset({".pl"}),
+    "php": frozenset({".php"}),
+    "ruby": frozenset({".rb"}),
+    "sh": frozenset({".sh"}),
+    "zsh": frozenset({".sh", ".zsh"}),
 }
+_PUBLIC_OPTION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_PYTHON_INTERPRETER = re.compile(r"^(?:pythonw?|pypy)(?:\d+(?:\.\d+)*)?(?:t)?$")
+_PYTHON_NO_VALUE_OPTIONS = re.compile(r"^-[bBdEiIOPqRsSuvx]+$")
 
 
-def _argument_name(value: str) -> str:
-    return value.split("=", 1)[0].lstrip("-/").lower().replace("-", "_")
+def _argument_name(value: str, *, windows: bool | None = None) -> str | None:
+    """Return a syntactic option name, never a positional path."""
+    if windows is None:
+        windows = os.name == "nt"
+    if value.startswith("--") and value != "--":
+        raw = value[2:].split("=", 1)[0]
+    elif value.startswith("-") and value != "-":
+        raw = value[1:].split("=", 1)[0]
+    elif windows and value.startswith("/") and value != "/":
+        raw = re.split(r"[=:]", value[1:], maxsplit=1)[0]
+    else:
+        return None
+    if not _PUBLIC_OPTION_NAME.fullmatch(raw):
+        return None
+    return raw.lower().replace("-", "_")
 
 
-def _is_sensitive_argument(value: str) -> bool:
-    name = _argument_name(value)
-    if any(public in name for public in ("digest", "fingerprint", "identifier", "sha256")):
-        return False
-    return name in _SENSITIVE_ARGUMENTS or name.endswith(
-        ("_api_key", "_credential", "_password", "_private_key", "_secret", "_token")
-    )
+def _command_basename(value: str) -> str:
+    """Extract an executable basename for either native path convention."""
+    name = re.split(r"[/\\]", value)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _interpreter_script_suffixes(executable: str) -> frozenset[str] | None:
+    name = _command_basename(executable)
+    if _PYTHON_INTERPRETER.fullmatch(name):
+        return frozenset({".py", ".pyw", ".pyz"})
+    return _SCRIPT_SUFFIXES_BY_INTERPRETER.get(name)
+
+
+def _python_script_argument_index(command: tuple[str, ...]) -> int | None:
+    index = 1
+    while index < len(command):
+        argument = command[index]
+        if argument == "--":
+            index += 1
+            break
+        if _PYTHON_NO_VALUE_OPTIONS.fullmatch(argument):
+            index += 1
+            continue
+        if argument.startswith("-"):
+            return None
+        break
+    if index >= len(command):
+        return None
+    return index
+
+
+def _classify_code_argument_indexes(
+    command: tuple[str, ...],
+) -> tuple[frozenset[int], bool]:
+    """Classify argv positions whose bytes form the launched implementation.
+
+    Position zero is always the executable. Known interpreters require one
+    unambiguous suffix-matched script. Python's no-value isolation/runtime
+    flags are parsed from a closed allowlist; code strings, modules, flags with
+    values, and unknown options deliberately remain unresolved. Other
+    file-valued arguments are configuration or data and stay private.
+    """
+    indexes = {0}
+    interpreter = _command_basename(command[0])
+    suffixes = _interpreter_script_suffixes(command[0])
+    if suffixes is None:
+        return frozenset(indexes), True
+    if _PYTHON_INTERPRETER.fullmatch(interpreter):
+        script_index = _python_script_argument_index(command)
+    else:
+        script_index = 1 if len(command) > 1 and not command[1].startswith("-") else None
+    if script_index is None or Path(command[script_index]).suffix.lower() not in suffixes:
+        return frozenset(indexes), False
+    indexes.add(script_index)
+    return frozenset(indexes), True
 
 
 def _split_command(command: str, *, windows: Optional[bool] = None) -> tuple[str, ...]:
@@ -73,14 +150,7 @@ def _split_command(command: str, *, windows: Optional[bool] = None) -> tuple[str
             else value
             for value in argv
         ]
-    if any(_is_sensitive_argument(value) for value in argv) or any(
-        re.search(r"://[^/@\s]+:[^/@\s]+@", value) for value in argv
-    ):
-        raise ValueError(
-            "adapter command arguments cannot carry credentials; use an isolated "
-            "operator-managed adapter boundary"
-        )
-    return tuple(argv)
+    return validate_public_command(tuple(argv))
 
 
 class AdapterContractError(RuntimeError):
@@ -95,6 +165,7 @@ def _run_bounded_command(
     max_stdout_bytes: int,
     max_stderr_bytes: int,
     adapter_name: str,
+    checkpoint: Callable[[], None] | None = None,
 ) -> bytes:
     """Run argv through the shared process-tree and output boundary."""
     try:
@@ -105,6 +176,7 @@ def _run_bounded_command(
             max_stdout_bytes=max_stdout_bytes,
             max_stderr_bytes=max_stderr_bytes,
             environment=_scrubbed_environment(),
+            checkpoint=checkpoint,
         )
     except BoundedProcessFailure as exc:
         if exc.kind == "launch_failed":
@@ -139,6 +211,7 @@ def _public_mapping(value: Any) -> Any:
                 "candidate_text",
                 "content",
                 "cookie",
+                "key_slot",
                 "password",
                 "private_key",
                 "prompt",
@@ -215,7 +288,9 @@ def _is_revision(value: Any) -> bool:
 def _discover_sidecar(command: tuple[str, ...]) -> Path | None:
     """Find a conventional adjacent manifest without importing or executing code."""
     candidates: list[Path] = []
-    for argument in command:
+    code_indexes, _resolved = _classify_code_argument_indexes(command)
+    for index in sorted(code_indexes):
+        argument = command[index]
         path = Path(argument).expanduser()
         if not path.is_file():
             continue
@@ -240,14 +315,20 @@ def _load_sidecar(path: Path) -> tuple[dict[str, Any], str]:
             raw = handle.read(MAX_SIDECAR_BYTES + 1)
         if len(raw) > MAX_SIDECAR_BYTES:
             raise AdapterContractError("adapter sidecar exceeds the size limit")
-        value = json.loads(raw)
+        value = strict_json_loads(raw)
     except AdapterContractError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise AdapterContractError("adapter sidecar could not be read as bounded JSON") from None
     if not isinstance(value, dict):
         raise AdapterContractError("adapter sidecar must contain one JSON object")
-    return _public_mapping(value), hashlib.sha256(raw).hexdigest()
+    try:
+        public_value = validate_public_json(value, source="adapter sidecar")
+    except (TypeError, ValueError):
+        raise AdapterContractError("adapter sidecar contains non-public metadata") from None
+    if type(public_value) is not dict:
+        raise AdapterContractError("adapter sidecar must contain one JSON object")
+    return public_value, hashlib.sha256(raw).hexdigest()
 
 
 @dataclass(repr=False)
@@ -270,6 +351,41 @@ class CommandScheme:
     _last_detection: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if (
+            type(self.command) is not tuple
+            or not self.command
+            or len(self.command) > 128
+            or any(
+                type(argument) is not str
+                or not argument
+                or len(argument) > 32_768
+                or "\0" in argument
+                for argument in self.command
+            )
+        ):
+            raise ValueError("adapter argv must be a bounded non-empty string array")
+        validate_public_command(self.command)
+        if type(self.name) is not str or not _ADAPTER_NAME.fullmatch(self.name):
+            raise ValueError("adapter name must be a registered identifier")
+        try:
+            validate_public_json({"name": self.name}, source="adapter name")
+        except (TypeError, ValueError):
+            raise ValueError("adapter name must be a public registered identifier") from None
+        if (
+            type(self.family) is not str
+            or type(self.source) is not str
+            or not self.family
+            or not self.source
+            or len(self.family) > 256
+            or len(self.source) > 4096
+        ):
+            raise ValueError("adapter family and source must be bounded public metadata")
+        try:
+            validate_public_json(
+                {"family": self.family, "source": self.source}, source="adapter identity"
+            )
+        except (TypeError, ValueError):
+            raise ValueError("adapter family and source must be public metadata") from None
         if self.sidecar_path is None:
             self.sidecar_path = _discover_sidecar(self.command)
 
@@ -304,7 +420,12 @@ class CommandScheme:
             raise ValueError("adapter command cannot be empty")
         return cls(name=name, family=family, source=source, command=argv, sidecar_path=sidecar)
 
-    def _call(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _call(
+        self,
+        payload: dict[str, Any],
+        *,
+        checkpoint: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         payload = {
             "protocol_version": PROTOCOL_VERSION,
             "policy": {
@@ -348,10 +469,11 @@ class CommandScheme:
             max_stdout_bytes=self.max_response_bytes,
             max_stderr_bytes=self.max_stderr_bytes,
             adapter_name=self.name,
+            checkpoint=checkpoint,
         )
         try:
-            result = json.loads(stdout)
-        except (UnicodeError, json.JSONDecodeError):
+            result = strict_json_loads(stdout)
+        except (UnicodeError, json.JSONDecodeError, StrictJSONError):
             raise AdapterContractError(f"adapter {self.name} returned invalid JSON") from None
         if not isinstance(result, dict):
             raise AdapterContractError(f"adapter {self.name} must return a JSON object")
@@ -438,6 +560,9 @@ class CommandScheme:
             blockers.append("network_required_unresolved")
         if not isinstance(supplied.get("model_download_required"), bool):
             blockers.append("model_download_required_unresolved")
+        _code_indexes, invocation_resolved = _classify_code_argument_indexes(self.command)
+        if not invocation_resolved:
+            blockers.append("adapter_executable_digest_unresolved")
         assert set(blockers) <= REPRODUCIBILITY_BLOCKER_CODES
         manifest = {
             **supplied,
@@ -452,10 +577,12 @@ class CommandScheme:
         return dict(self._static_manifest)
 
     def executable_digests(self) -> list[dict[str, Any]]:
-        """Digest each local executable/script argument without recording its path."""
+        """Digest classified executable/script positions without recording paths."""
         values: list[dict[str, Any]] = []
         seen: set[Path] = set()
-        for index, argument in enumerate(self.command):
+        code_indexes, _resolved = _classify_code_argument_indexes(self.command)
+        for index in sorted(code_indexes):
+            argument = self.command[index]
             candidate = Path(argument).expanduser()
             if index == 0 and not candidate.is_file():
                 located = shutil.which(argument, path=_scrubbed_environment().get("PATH"))
@@ -481,15 +608,21 @@ class CommandScheme:
     def reproducibility_manifest(self) -> dict[str, Any]:
         manifest = self.static_manifest()
         executable = self.executable_digests()
+        private_file_indexes = secret_file_argument_indexes(self.command)
         blockers = list(manifest.get("reproducibility_blockers", []))
-        if not executable:
+        code_indexes, invocation_resolved = _classify_code_argument_indexes(self.command)
+        digested_indexes = {item["argument_index"] for item in executable}
+        if not invocation_resolved or not code_indexes <= digested_indexes:
             blockers.append("adapter_executable_digest_unresolved")
         if not manifest.get("sidecar_sha256"):
             blockers.append("adapter_sidecar_digest_unresolved")
         command_identity = {
             "argument_count": len(self.command),
             "option_names": sorted(
-                _argument_name(value) for value in self.command if value.startswith(("-", "/"))
+                name
+                for index, value in enumerate(self.command)
+                if index not in private_file_indexes
+                if (name := _argument_name(value)) is not None
             ),
             "configuration_sha256": manifest.get("configuration_sha256"),
             "executable_digests": executable,
@@ -500,6 +633,7 @@ class CommandScheme:
             "command_identity": "public-shape-v1",
             "executable_digests": executable,
             "reproducibility_blockers": sorted(set(blockers)),
+            "independent": manifest.get("independent") is True and not blockers,
             "reproducible": not blockers,
         }
 
@@ -514,12 +648,20 @@ class CommandScheme:
                 "pass --allow-model-download explicitly"
             ) from None
 
-    def capabilities(self) -> dict[str, Any]:
+    def capabilities(self, *, checkpoint: Callable[[], None] | None = None) -> dict[str, Any]:
         """Execute the runtime capability check after static privacy preflight."""
         if self._capabilities is None:
             manifest = self.static_manifest()
             self._enforce_static_policy(manifest)
-            result = _public_mapping(self._call({"action": "capabilities"}))
+            raw_result = self._call({"action": "capabilities"}, checkpoint=checkpoint)
+            try:
+                result = validate_public_json(raw_result, source="adapter capability response")
+            except (TypeError, ValueError):
+                raise AdapterContractError(
+                    f"adapter {self.name} returned non-public capability metadata"
+                ) from None
+            if type(result) is not dict:
+                raise AdapterContractError(f"adapter {self.name} must return public metadata")
             if result.get("network_required") and not self.allow_network:
                 raise AdapterContractError(
                     f"adapter {self.name} requires network access; pass --allow-network explicitly"

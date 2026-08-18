@@ -1,0 +1,7 @@
+{
+  "fraction": 0.5,
+  "green_mask": "712bbfd90800cc160c70b3bcb78776caafd1a0d55de29fd063fa9bfa20b00c4d",
+  "kind": "unigram-fixed-green-mask-bitset-v1",
+  "schema_version": "1.0",
+  "vocab_size": 256
+}

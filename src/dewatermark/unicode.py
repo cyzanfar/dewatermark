@@ -62,6 +62,9 @@ _POLICY_PATH = Path(__file__).with_name("unicode_policy.json")
 with _POLICY_PATH.open(encoding="utf-8") as _policy_file:
     UNICODE_POLICY: dict[str, Any] = json.load(_policy_file)
 UNICODE_POLICY_VERSION = str(UNICODE_POLICY["policy_version"])
+UNICODE_POLICY_SHA256 = hashlib.sha256(
+    json.dumps(UNICODE_POLICY, sort_keys=True, separators=(",", ":")).encode("utf-8")
+).hexdigest()
 
 # cp -> (category, aggressive action, marker token, conservative rule)
 _TABLE: dict[int, tuple[str, str, str, str]] = {}

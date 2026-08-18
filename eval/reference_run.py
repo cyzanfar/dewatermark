@@ -14,6 +14,7 @@ try:
         create_bundle,
         reference_replay_recipe,
         reproduction_descriptor,
+        results_identity,
         write_bundle,
     )
     from .manifest import canonical_json, json_safe
@@ -30,6 +31,7 @@ except ImportError:  # direct-script compatibility
         create_bundle,
         reference_replay_recipe,
         reproduction_descriptor,
+        results_identity,
         write_bundle,
     )
     from manifest import canonical_json, json_safe  # type: ignore
@@ -44,6 +46,15 @@ except ImportError:  # direct-script compatibility
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+# Fixed values sampled once from a CSPRNG. They label synthetic fixture
+# partitions and are deliberately unrelated to any key material.
+_FIXTURE_KEY_IDS = {
+    "calibration": "c11e1d9712b1af60775dfc479771829360bdee30a2657082815dd7faef0ce8fe",
+    "development": "c3d5461eb55a7db2038eed9cdeae6e8458d9843ccdeea69dd60f44297d77720f",
+    "final_test": "86222b3dcfeb0f07852eb7283bcff47a567b2745df5fa9f9987be7191c43ad91",
+}
 
 
 def _task_checkers() -> list[str]:
@@ -107,13 +118,13 @@ def reference_sample_registry() -> dict[str, Any]:
             positive_id,
             split="calibration",
             cohort="watermarked_positive",
-            key=_digest("fixture-key-cal"),
+            key=_FIXTURE_KEY_IDS["calibration"],
         )
         null = _sample(
             f"cal-{index:03d}-null",
             split="calibration",
             cohort="matched_generator_null",
-            key=_digest("fixture-key-cal"),
+            key=_FIXTURE_KEY_IDS["calibration"],
             paired=positive_id,
         )
         null["cluster_id"] = positive["cluster_id"]
@@ -122,13 +133,13 @@ def reference_sample_registry() -> dict[str, Any]:
         "dev-000-positive",
         split="development",
         cohort="watermarked_positive",
-        key=_digest("fixture-key-dev"),
+        key=_FIXTURE_KEY_IDS["development"],
     )
     development_null = _sample(
         "dev-000-null",
         split="development",
         cohort="matched_generator_null",
-        key=_digest("fixture-key-dev"),
+        key=_FIXTURE_KEY_IDS["development"],
         paired="dev-000-positive",
     )
     development_null["cluster_id"] = development_positive["cluster_id"]
@@ -136,13 +147,13 @@ def reference_sample_registry() -> dict[str, Any]:
         "final-000-positive",
         split="final_test",
         cohort="watermarked_positive",
-        key=_digest("fixture-key-final"),
+        key=_FIXTURE_KEY_IDS["final_test"],
     )
     final_null = _sample(
         "final-000-null",
         split="final_test",
         cohort="matched_generator_null",
-        key=_digest("fixture-key-final"),
+        key=_FIXTURE_KEY_IDS["final_test"],
         paired="final-000-positive",
     )
     final_null["cluster_id"] = final_positive["cluster_id"]
@@ -163,9 +174,8 @@ def reference_sample_registry() -> dict[str, Any]:
         "frozen_before_final_test": True,
         "freeze_record_sha256": _digest("reference-protocol-freeze-v1"),
         "key_partitions": [
-            {"key_fingerprint": _digest("fixture-key-cal"), "split": "calibration"},
-            {"key_fingerprint": _digest("fixture-key-dev"), "split": "development"},
-            {"key_fingerprint": _digest("fixture-key-final"), "split": "final_test"},
+            {"key_fingerprint": key_id, "split": split}
+            for split, key_id in _FIXTURE_KEY_IDS.items()
         ],
         "samples": samples,
     }
@@ -224,6 +234,9 @@ def reference_observation_set(sample_registry: dict[str, Any]) -> dict[str, Any]
             "schema_version": "1.0",
             "sample_registry_sha256": sample_report["sample_registry_sha256"],
             "run_manifest": {
+                "aggregation_contract_version": "1.1",
+                "bootstrap_replicates_count": 50,
+                "bootstrap_seed_count": 0,
                 "classification": "synthetic_harness_fixture_not_performance_evidence",
                 "fixture_sha256": _digest("reference-protocol-run-v1"),
                 "network_allowed": False,
@@ -314,6 +327,7 @@ def write_reference_protocol_run(output_directory: Path) -> dict[str, Any]:
         name: {"sha256": table["sha256"], "records": len(table["records"])}
         for name, table in aggregate["score_tables"].items()
     }
+    public_results["aggregate_sha256"] = results_identity(public_results)
     bundle = create_bundle(
         purpose="harness_conformance",
         manifest=observations["run_manifest"],
@@ -334,7 +348,7 @@ def write_reference_protocol_run(output_directory: Path) -> dict[str, Any]:
         "bundle_id": bundle["bundle_id"],
         "sample_registry_sha256": validate_sample_registry(samples)["sample_registry_sha256"],
         "observation_set_id": observations["observation_set_id"],
-        "aggregate_sha256": aggregate["aggregate_sha256"],
+        "aggregate_sha256": public_results["aggregate_sha256"],
         "files": {
             "sample_registry": sample_path.name,
             "observations": observation_path.name,
@@ -345,7 +359,7 @@ def write_reference_protocol_run(output_directory: Path) -> dict[str, Any]:
                 {
                     "bundle_id": bundle["bundle_id"],
                     "observation_set_id": observations["observation_set_id"],
-                    "aggregate_sha256": aggregate["aggregate_sha256"],
+                    "aggregate_sha256": public_results["aggregate_sha256"],
                 }
             ).encode("utf-8")
         ).hexdigest(),

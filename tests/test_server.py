@@ -1,3 +1,4 @@
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,13 @@ from dewatermark.assurance_api import (
     verify_text,
 )
 from dewatermark.config import DewatermarkConfig, configure, reset_config
+from dewatermark.models import CapabilityManifest
+from dewatermark.providers import (
+    register_detector,
+    register_provider,
+    unregister_detector,
+    unregister_provider,
+)
 from dewatermark.server import (
     DewatermarkHandler,
     _is_json_content_type,
@@ -28,9 +36,125 @@ from dewatermark.server import (
 def test_openapi_has_routes():
     schema = openapi_schema()
     paths = schema["paths"]
-    assert {"/inspect", "/plan", "/apply", "/verify", "/sanitize"} <= set(paths)
+    assert {
+        "/inspect",
+        "/plan",
+        "/apply",
+        "/verify",
+        "/localize",
+        "/mitigate",
+        "/sanitize",
+    } <= set(paths)
     assert paths["/apply"]["post"]["operationId"] == "applyTransformation"
     assert schema["security"] == [{"bearerAuth": []}, {}]
+
+
+def test_http_detector_guided_localization_and_mitigation_are_bounded_and_consent_gated():
+    source = "alpha blue beta blue gamma blue delta epsilon zeta eta theta"
+
+    def detector_capability(identifier):
+        return CapabilityManifest(
+            identifier=identifier,
+            kind="detector",
+            schemes=("http-search-fixture",),
+            calibrated=True,
+            independent=True,
+            metadata={
+                "configuration_sha256": hashlib.sha256(identifier.encode()).hexdigest(),
+                "resource_accounting": "none",
+                "score_direction": "higher",
+                "threshold": 2.0,
+                "threshold_operator": ">=",
+                "watermark_target_sha256": "e" * 64,
+            },
+        )
+
+    class Primary:
+        capability = detector_capability("http-search-primary")
+
+        def __init__(self, _config=None):
+            pass
+
+        def available(self):
+            return True
+
+        def detect(self, text):
+            score = float(text.count("blue"))
+            start = text.find("blue")
+            return {
+                "scheme": "http-search-fixture",
+                "status": "detected" if score >= 2 else "not_detected",
+                "score": score,
+                "threshold": 2.0,
+                "score_direction": "higher",
+                "p_value": 0.001 if score >= 2 else 0.8,
+                "localization": ([{"start": start, "end": start + 4}] if start >= 0 else []),
+            }
+
+    class Verifier(Primary):
+        capability = detector_capability("http-search-verifier")
+
+        def detect(self, text):
+            score = float(sum(token == "blue" for token in text.split()))
+            start = text.find("blue")
+            return {
+                "scheme": "http-search-fixture",
+                "status": "detected" if score >= 2 else "not_detected",
+                "score": score,
+                "threshold": 2.0,
+                "score_direction": "higher",
+                "p_value": 0.001 if score >= 2 else 0.8,
+                "localization": ([{"start": start, "end": start + 4}] if start >= 0 else []),
+            }
+
+    class Strategy:
+        capability = CapabilityManifest(
+            identifier="http-search-strategy",
+            kind="transformer",
+            metadata={"resource_accounting": "none"},
+        )
+        constructed = 0
+
+        def __init__(self, _config):
+            type(self).constructed += 1
+
+        def available(self):
+            return True
+
+        def rewrite(self, text, **_options):
+            return text.replace("blue", "teal", 2), {}
+
+    register_detector("http-search-primary", Primary)
+    register_detector("http-search-verifier", Verifier)
+    register_provider("http-search-strategy", Strategy)
+    try:
+        localized = process_request(
+            "/localize", {"text": source, "detector": "http-search-primary"}
+        )
+        assert localized["status"] == "localized_exploratory"
+        assert localized["spans"] == [{"start": 6, "end": 10, "contributing_windows": 1}]
+        assert source not in str(localized)
+
+        request = {
+            "text": source,
+            "detector": "http-search-primary",
+            "verifiers": ["http-search-verifier"],
+            "strategies": ["http-search-strategy"],
+            "consent": {"transformation": False},
+        }
+        with pytest.raises(ConsentRequiredError):
+            process_request("/mitigate", request)
+        assert Strategy.constructed == 0
+
+        request["consent"] = {"transformation": True}
+        mitigated = process_request("/mitigate", request)
+        assert mitigated["status"] == "verified"
+        assert mitigated["cleaned_text"] == source.replace("blue", "teal", 2)
+        assert source not in str(mitigated["receipt"])
+    finally:
+        unregister_detector("http-search-primary")
+        unregister_detector("http-search-verifier")
+        unregister_provider("http-search-strategy")
 
 
 def test_checked_in_openapi_snapshot_is_current():

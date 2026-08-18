@@ -17,8 +17,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from dewatermark.command_safety import validate_public_json
+
 try:
-    from .manifest import canonical_json
+    from .manifest import StrictJSONError, canonical_json, strict_json_loads
     from .public_codes import (
         COVERAGE_COMPLETE_REASON_CODES_BY_AREA,
         COVERAGE_REASON_CODES_BY_AREA,
@@ -27,7 +29,7 @@ try:
         is_public_token,
     )
 except ImportError:  # direct-script compatibility
-    from manifest import canonical_json  # type: ignore
+    from manifest import StrictJSONError, canonical_json, strict_json_loads  # type: ignore
     from public_codes import (  # type: ignore
         COVERAGE_COMPLETE_REASON_CODES_BY_AREA,
         COVERAGE_REASON_CODES_BY_AREA,
@@ -99,10 +101,10 @@ def _read_bounded_json(path: Path) -> dict[str, Any]:
             data = handle.read(MAX_REGISTRY_BYTES + 1)
         if len(data) > MAX_REGISTRY_BYTES:
             raise ProtocolValidationError("registry exceeds the size limit")
-        value = json.loads(data.decode("utf-8"))
+        value = strict_json_loads(data)
     except ProtocolValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise ProtocolValidationError("registry is not readable bounded JSON") from None
     finally:
         if descriptor >= 0:
@@ -229,6 +231,24 @@ def _require_plain_tree(value: Any, *, _active: set[int] | None = None, _depth: 
     raise ProtocolValidationError("public registries must contain only plain JSON values")
 
 
+def _require_safe_public_values(value: Any, *, label: str) -> None:
+    """Reject credential- and path-shaped strings without interpreting v1 keys."""
+    if type(value) is dict:
+        for item in value.values():
+            _require_safe_public_values(item, label=label)
+        return
+    if type(value) in (list, tuple):
+        for item in value:
+            _require_safe_public_values(item, label=label)
+        return
+    if type(value) is not str:
+        return
+    try:
+        validate_public_json(value, source=label)
+    except (TypeError, ValueError):
+        raise ProtocolValidationError(f"{label} contains private or credential-like text") from None
+
+
 def _contains_private_content(value: Any) -> bool:
     if type(value) is dict:
         for key, item in value.items():
@@ -253,6 +273,13 @@ def _require_sha256(value: Any, label: str) -> str:
     return value
 
 
+def _require_opaque_key_id(value: Any, label: str) -> str:
+    """Validate the 64-hex shape shared by legacy and new public IDs."""
+    if not isinstance(value, str) or not _SHA256.fullmatch(value):
+        raise ProtocolValidationError(f"{label} must be 64 lowercase hexadecimal characters")
+    return value
+
+
 def _required_metadata(registry: Mapping[str, Any]) -> dict[str, set[str]]:
     return {
         str(value["id"]): {str(field) for field in value.get("required_metadata", [])}
@@ -271,14 +298,14 @@ def _validate_key_partitions(
             raise ProtocolValidationError("key partition entries must be objects")
         if set(item) != {"key_fingerprint", "split"}:
             raise ProtocolValidationError("key partition fields do not match the v1 contract")
-        fingerprint = item.get("key_fingerprint")
+        key_id = item.get("key_fingerprint")
         split = item.get("split")
-        _require_sha256(fingerprint, "key_fingerprint")
+        _require_opaque_key_id(key_id, "legacy key_fingerprint ID")
         if split not in split_ids:
             raise ProtocolValidationError("key partition references an unknown split")
-        if fingerprint in partitions:
-            raise ProtocolValidationError("a key fingerprint may belong to only one split")
-        partitions[fingerprint] = str(split)
+        if key_id in partitions:
+            raise ProtocolValidationError("an opaque key ID may belong to only one split")
+        partitions[key_id] = str(split)
     final_keys = sorted(key for key, split in partitions.items() if split == "final_test")
     tuning_keys = sorted(key for key, split in partitions.items() if split != "final_test")
     return partitions, {
@@ -377,6 +404,7 @@ def validate_sample_registry(
     _require_plain_tree(sample_registry)
     if type(sample_registry) is not dict:
         raise ProtocolValidationError("sample registry must be a plain object")
+    _require_safe_public_values(sample_registry, label="sample registry")
     protocol = registry if registry is not None else load_protocol_registry()
     _require_plain_tree(protocol)
     if type(protocol) is not dict:
@@ -438,6 +466,7 @@ def validate_sample_registry(
         for item in protocol["tasks"]
     }
     human_count = 0
+    generated_key_bindings_complete = True
     for index, item in enumerate(samples):
         if not isinstance(item, Mapping):
             raise ProtocolValidationError(f"sample {index} must be an object")
@@ -533,6 +562,10 @@ def validate_sample_registry(
                     f"human control {index} source_date must use YYYY-MM-DD"
                 )
         else:
+            if key is None:
+                # Older v1 registries allowed this value. They remain readable,
+                # but cannot establish complete held-out-key coverage.
+                generated_key_bindings_complete = False
             if not is_public_token(metadata.get("generator_id")):
                 raise ProtocolValidationError(f"sample {index} has an invalid generator_id")
             _require_sha256(
@@ -572,6 +605,10 @@ def validate_sample_registry(
         for field in ("split", "cluster_id", "task", "language", "length_bin"):
             if item.get(field) != paired.get(field):
                 raise ProtocolValidationError(f"matched null differs from its positive on {field}")
+        if item.get("key_fingerprint") != paired.get("key_fingerprint"):
+            # Pair equality was not part of the published v1 contract. Preserve
+            # compatibility and downgrade the claim rather than rejecting it.
+            generated_key_bindings_complete = False
         for field in ("generator_id", "decoding_config_sha256"):
             if item["metadata"].get(field) != paired["metadata"].get(field):
                 raise ProtocolValidationError(f"matched null differs from its positive on {field}")
@@ -607,6 +644,7 @@ def validate_sample_registry(
     held_out_complete = (
         held_out_status["state"] == "complete"
         and sample_registry.get("frozen_before_final_test") is True
+        and generated_key_bindings_complete
     )
     coverage = {
         "reproducible_identity": _status(
@@ -629,9 +667,15 @@ def validate_sample_registry(
             missing_final_test_matrix_cells=len(missing_matrix),
         ),
         "held_out_keys": _status(
-            "complete" if held_out_complete else held_out_status["state"],
+            "complete"
+            if held_out_complete
+            else "partial"
+            if held_out_status["state"] == "complete"
+            else held_out_status["state"],
             "key_partitions_frozen_before_final_test"
             if held_out_complete
+            else "tuning_and_final_key_fingerprints_required"
+            if not generated_key_bindings_complete
             else str(held_out_status["reason"]),
             tuning_key_count=held_out_status["tuning_key_count"],
             final_test_key_count=held_out_status["final_test_key_count"],
@@ -777,6 +821,7 @@ def human_control_records(
                 "rewriter_exposed": False,
             },
         }
+        _require_safe_public_values(record, label="human control metadata")
         records.append(record)
         if include_runtime_text:
             runtime_texts.append(text)

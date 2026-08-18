@@ -195,6 +195,8 @@ class RequestContext:
     def before_remote_call(self, url: str, backend: str, body: Mapping[str, Any]) -> None:
         """Reserve one physical HTTP attempt and record only privacy-safe metadata."""
         self.checkpoint()
+        if not self.allow_remote_processing:
+            raise ExtensionUsageRejected("remote_processing_not_permitted")
         parsed = urlparse(url)
         endpoint = parsed.hostname or "unknown"
         endpoint_digest = hashlib.sha256(endpoint.encode("utf-8", "replace")).hexdigest()
@@ -291,6 +293,10 @@ class RequestContext:
         """Record a hashed model identifier, never a potentially private path."""
         if type(model) is not str:
             raise TypeError("model identifier must be a string")
+        if type(download_allowed) is not bool:
+            raise TypeError("model download permission must be boolean")
+        if download_allowed and not self.allow_model_download:
+            raise ExtensionUsageRejected("model_download_not_permitted")
         digest = hashlib.sha256(model.encode("utf-8", "replace")).hexdigest()
         with self._lock:
             self.model_accesses.append(
@@ -379,6 +385,8 @@ def begin_extension_usage(
 ) -> tuple[tuple[Optional[RequestContext], int, int], str]:
     """Fail before extension execution when its declared budget is unavailable."""
     accounting = extension_resource_accounting(capability)
+    network_required = capability.network_required
+    download_possible = capability.model_download_possible
     snapshot = extension_usage_snapshot()
     if accounting == "none":
         return snapshot, accounting
@@ -386,6 +394,10 @@ def begin_extension_usage(
     if context is None:
         raise ExtensionUsageRejected("request_context_required")
     context.checkpoint()
+    if network_required and not context.allow_remote_processing:
+        raise ExtensionUsageRejected("remote_processing_not_permitted")
+    if download_possible and not context.allow_model_download:
+        raise ExtensionUsageRejected("model_download_not_permitted")
     if accounting == "network" and context.remaining_remote_calls() < 1:
         raise ResourceBudgetExceeded(f"remote-call budget exhausted ({context.max_remote_calls})")
     return snapshot, accounting

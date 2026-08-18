@@ -42,6 +42,72 @@ class IncompatibleResumeError(RuntimeError):
     """A checkpoint belongs to a different scientific run."""
 
 
+class StrictJSONError(ValueError):
+    """JSON is ambiguous, non-finite, or not a plain in-memory value."""
+
+
+def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise StrictJSONError("JSON object contains a duplicate key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise StrictJSONError("JSON numbers must be finite")
+
+
+def _validate_strict_json_tree(
+    value: Any, *, active: set[int] | None = None, depth: int = 0
+) -> None:
+    if depth > 128:
+        raise StrictJSONError("JSON nesting exceeds the limit")
+    value_type = type(value)
+    if value_type is dict or value_type is list:
+        seen = set() if active is None else active
+        identity = id(value)
+        if identity in seen:
+            raise StrictJSONError("JSON values cannot contain cycles")
+        seen.add(identity)
+        try:
+            if value_type is dict:
+                for key, item in value.items():
+                    if type(key) is not str:
+                        raise StrictJSONError("JSON object keys must be strings")
+                    _validate_strict_json_tree(item, active=seen, depth=depth + 1)
+            else:
+                for item in value:
+                    _validate_strict_json_tree(item, active=seen, depth=depth + 1)
+        finally:
+            seen.remove(identity)
+        return
+    if value is None or value_type in (str, int, bool):
+        return
+    if value_type is float:
+        if not math.isfinite(value):
+            raise StrictJSONError("JSON numbers must be finite")
+        return
+    raise StrictJSONError("JSON must contain only plain values")
+
+
+def strict_json_loads(data: str | bytes | bytearray) -> Any:
+    """Decode unambiguous RFC-style JSON and reject duplicate/non-finite values."""
+    try:
+        value = json.loads(
+            data,
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_json_constant,
+        )
+    except StrictJSONError:
+        raise
+    except (UnicodeError, json.JSONDecodeError, TypeError):
+        raise StrictJSONError("value is not valid JSON") from None
+    _validate_strict_json_tree(value)
+    return value
+
+
 def _version(name: str) -> str | None:
     try:
         return metadata.version(name)

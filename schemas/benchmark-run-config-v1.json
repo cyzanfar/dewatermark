@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/benchmark-run-config-v1.json",
+  "title": "Dewatermark local benchmark run configuration v1",
+  "description": "Operator-local execution configuration. This file is never a public evidence artifact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "classification",
+    "purpose",
+    "seed",
+    "generator_adapter",
+    "cross_detector_adapters",
+    "condition_adapters",
+    "quality_adapter",
+    "task_adapter",
+    "key_ids",
+    "key_id_policy",
+    "key_slots",
+    "execution_budget",
+    "model_size_bytes",
+    "human_review"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "classification": {
+      "enum": [
+        "detector_scoped_real_adapter_benchmark",
+        "synthetic_harness_fixture_not_performance_evidence"
+      ]
+    },
+    "purpose": { "enum": ["exploratory", "frozen_evaluation", "harness_conformance"] },
+    "seed": { "type": "integer", "minimum": 0 },
+    "generator_adapter": { "$ref": "#/$defs/adapter" },
+    "cross_detector_adapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/adapter" }
+    },
+    "condition_adapters": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/adapter" }
+    },
+    "quality_adapter": { "$ref": "#/$defs/adapter" },
+    "task_adapter": { "$ref": "#/$defs/adapter" },
+    "key_ids": {
+      "type": "object",
+      "description": "Public partition labels generated independently with a CSPRNG. These are non-secret 256-bit IDs and MUST NOT be hashes, encodings, or other derivations of watermark keys or private key-slot names.",
+      "additionalProperties": false,
+      "required": ["calibration", "development", "final_test"],
+      "properties": {
+        "calibration": { "$ref": "#/$defs/opaqueKeyId" },
+        "development": { "$ref": "#/$defs/opaqueKeyId" },
+        "final_test": { "$ref": "#/$defs/opaqueKeyId" }
+      }
+    },
+    "key_id_policy": {
+      "const": "csprng_256bit_non_secret",
+      "description": "Operator attestation that key_ids are random non-secret labels, not derived from keys or slots."
+    },
+    "key_slots": {
+      "type": "object",
+      "description": "Private operator-side key handles. These values are sent only to local adapters and never written to public artifacts.",
+      "additionalProperties": false,
+      "required": ["calibration", "development", "final_test"],
+      "properties": {
+        "calibration": { "$ref": "#/$defs/keySlot" },
+        "development": { "$ref": "#/$defs/keySlot" },
+        "final_test": { "$ref": "#/$defs/keySlot" }
+      }
+    },
+    "execution_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_records",
+        "max_requested_tokens",
+        "max_adapter_processes",
+        "deadline_seconds",
+        "max_cancellation_checks"
+      ],
+      "properties": {
+        "max_records": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+        "max_requested_tokens": { "type": "integer", "minimum": 1, "maximum": 10000000000 },
+        "max_adapter_processes": { "type": "integer", "minimum": 1, "maximum": 100000000 },
+        "deadline_seconds": { "type": "integer", "minimum": 1, "maximum": 604800 },
+        "max_cancellation_checks": { "type": "integer", "minimum": 1, "maximum": 100000000 }
+      }
+    },
+    "model_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+    "human_review": { "$ref": "#/$defs/humanReview" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "opaqueKeyId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "A CSPRNG-generated 256-bit non-secret identifier. It MUST NOT be derived from key material or a private key-slot name."
+    },
+    "keySlot": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000\\r\\n]+$"
+    },
+    "publicId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]*$"
+    },
+    "humanReview": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "enum": ["not_run", "not_available"] },
+            "reason": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "blinded_human_review_not_available",
+                    "blinded_human_review_not_run",
+                    "synthetic_fixture_not_human_evaluation"
+                  ]
+                },
+                { "$ref": "#/$defs/sha256" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "packet_sha256",
+            "assignment_sha256",
+            "protocol_sha256",
+            "reviewer_count",
+            "blinded",
+            "pre_registered",
+            "agreement"
+          ],
+          "properties": {
+            "state": { "const": "complete" },
+            "packet_sha256": { "$ref": "#/$defs/sha256" },
+            "assignment_sha256": { "$ref": "#/$defs/sha256" },
+            "protocol_sha256": { "$ref": "#/$defs/sha256" },
+            "reviewer_count": { "type": "integer", "minimum": 2 },
+            "blinded": { "const": true },
+            "pre_registered": { "const": true },
+            "agreement": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["metric", "value", "ci95"],
+              "properties": {
+                "metric": { "enum": ["krippendorff_alpha", "fleiss_kappa"] },
+                "value": { "type": "number", "minimum": -1, "maximum": 1 },
+                "ci95": {
+                  "type": "array",
+                  "prefixItems": [
+                    { "type": "number", "minimum": -1, "maximum": 1 },
+                    { "type": "number", "minimum": -1, "maximum": 1 }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "family", "source", "sidecar", "argv"],
+      "properties": {
+        "name": { "$ref": "#/$defs/publicId" },
+        "family": { "$ref": "#/$defs/publicId" },
+        "source": { "$ref": "#/$defs/publicId" },
+        "sidecar": { "type": "string", "minLength": 1 },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": { "type": "string", "minLength": 1, "maxLength": 32768 }
+        }
+      }
+    }
+  }
+}

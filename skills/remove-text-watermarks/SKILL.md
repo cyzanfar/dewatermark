@@ -16,6 +16,27 @@ Use the installed `dewatermark` package to inspect before changing text, choose 
 5. Apply only the exact reviewed plan with `dewatermark apply --plan-digest DIGEST --consent`. Network use and model downloads require separate explicit flags. Keep the safe Unicode profile unless the user explicitly accepts lossy Latin-oriented normalization.
 6. Verify source and candidate with `dewatermark verify`, then report `detection_status`, `transformation_status`, `verification_status`, and `claim_scope` separately.
 
+## Detector-guided statistical workflow
+
+Use this only when the operator has installed a detector for the exact scheme,
+tokenizer, key or configuration, and threshold in scope.
+
+1. Run `dewatermark localize --detector NAME` to identify content-free character ranges. Treat `localized_exploratory` as an editing hint, not proof.
+2. Require a different, calibrated held-out detector before attempting a verified rewrite. Bundled reference fixtures and uncalibrated adapter packs are not sufficient.
+3. Run `dewatermark mitigate` only with explicit transformation consent and explicit network/model flags when needed. Name every strategy and set tight candidate/query limits.
+4. Accept changed text only when the result is `verified`. Every rollback or abstention must preserve the exact source.
+5. Report the named detectors, configuration fingerprints, quality outcomes, search limits, and claim scope from the content-free receipt.
+
+```bash
+dewatermark localize --input input.txt --detector PRIMARY
+dewatermark mitigate --input input.txt --detector PRIMARY \
+  --verifier HELD_OUT --strategy REWRITER --consent
+```
+
+The one-shot `mitigate` command enforces consent but is not a signed approval
+workflow. Use the separate plan/apply flow when a human or external system must
+review and bind exact settings before execution.
+
 ## Safe commands
 
 ```bash

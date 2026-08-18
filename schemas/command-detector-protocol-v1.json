@@ -22,7 +22,7 @@
         "text"
       ],
       "properties": {
-        "protocol_version": {"const": "1.0"},
+        "protocol_version": {"enum": ["1.0", "1.1"]},
         "action": {"const": "detect"},
         "detector": {"type": "string", "minLength": 1},
         "configuration_sha256": {"$ref": "#/$defs/sha256"},
@@ -90,6 +90,38 @@
           "then": {
             "required": ["score"],
             "properties": {"score": {"type": "number"}}
+          }
+        },
+        {
+          "if": {
+            "properties": {"protocol_version": {"const": "1.1"}},
+            "required": ["protocol_version"]
+          },
+          "then": {
+            "required": ["threshold_operator"],
+            "properties": {
+              "threshold_operator": {"enum": [">", ">=", "<", "<="]}
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {"score_direction": {"const": "higher"}},
+                  "required": ["score_direction"]
+                },
+                "then": {
+                  "properties": {"threshold_operator": {"enum": [">", ">="]}}
+                }
+              },
+              {
+                "if": {
+                  "properties": {"score_direction": {"const": "lower"}},
+                  "required": ["score_direction"]
+                },
+                "then": {
+                  "properties": {"threshold_operator": {"enum": ["<", "<="]}}
+                }
+              }
+            ]
           }
         }
       ],

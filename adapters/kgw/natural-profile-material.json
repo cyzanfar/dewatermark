@@ -1,0 +1,17 @@
+{
+  "attestation": {
+    "release_artifact_provenance": "GitHub OIDC attestation for the containing distribution",
+    "standalone_signature": false
+  },
+  "files": {
+    "green-transitions-v1.json": "256792d1fdf8d4cfaf23a259115d84ea5d6532252b21e13edfb26539413c06eb",
+    "natural-threshold-evidence.json": "8865c05e971de4389626c229e4652dce00a1be2ce3c4546bd0e898ecc3d48019",
+    "natural-tokenizer.json": "0aace7d58e4d3b208359956e00057b9be16f1df912a5aad9067070922b918401",
+    "natural_adapter.py": "4e599fa6164498f3554e79dfa502a8d1d77a8f5ee79ec06f6c61a2a55be3608b",
+    "upstream/watermark_processor.py": "512c40644bc9e9932a8674bbf13046c1a4e92db429cff92afc9e90d2226896fc"
+  },
+  "kind": "content-addressed-reference-profile-material-v1",
+  "schema_version": "1.0",
+  "source_repository": "https://github.com/jwkirchenbauer/lm-watermarking",
+  "source_revision": "82922516930c02f8aa322765defdb5863d07a00e"
+}

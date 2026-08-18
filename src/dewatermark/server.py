@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Iterable, cast
 from urllib.parse import urlparse
@@ -19,10 +20,26 @@ from .assurance_api import (
     local_only_config,
     verify_text,
 )
+from .config import DewatermarkConfig
+from .detector_session import DetectorSession
+from .localization import localize
 from .models import RemovalMode, SanitizeProfile
+from .optimizer import SearchLimits, mitigate
+from .schemas import localization_result_schema, mitigation_result_schema
+from .strategies import registered_strategy
 
 MAX_BODY_BYTES = 2_000_000
-_POST_ROUTES = {"/analyze", "/inspect", "/sanitize", "/remove", "/plan", "/apply", "/verify"}
+_POST_ROUTES = {
+    "/analyze",
+    "/inspect",
+    "/sanitize",
+    "/remove",
+    "/plan",
+    "/apply",
+    "/verify",
+    "/localize",
+    "/mitigate",
+}
 _MODES = {"auto", "sanitize", "paraphrase", "full", "sira", "bias_inversion", "adversarial"}
 _REQUEST_FIELDS = {
     "/analyze": frozenset({"text"}),
@@ -52,6 +69,19 @@ _REQUEST_FIELDS = {
         }
     ),
     "/verify": frozenset({"source_text", "candidate_text", "detector"}),
+    "/localize": frozenset(
+        {
+            "text",
+            "detector",
+            "window_characters",
+            "stride_characters",
+            "familywise_alpha",
+            "max_detector_queries",
+            "allow_network",
+            "allow_model_download",
+        }
+    ),
+    "/mitigate": frozenset({"text", "detector", "verifiers", "strategies", "consent", "limits"}),
 }
 
 
@@ -105,6 +135,31 @@ def _text(payload: dict[str, Any], name: str = "text", *, nonempty: bool = False
     if nonempty and not value:
         raise ValueError(f"{name} must not be empty")
     return value
+
+
+def _identifiers(payload: dict[str, Any], name: str) -> tuple[str, ...]:
+    value = payload.get(name)
+    if type(value) is not list or not value or len(value) > 32:
+        raise ValueError(f"{name} must be a non-empty bounded string array")
+    if any(type(item) is not str or not item or len(item) > 256 for item in value):
+        raise ValueError(f"{name} must contain non-empty strings")
+    return tuple(value)
+
+
+def _optional_int(
+    payload: dict[str, Any], name: str, default: int, *, minimum: int, maximum: int
+) -> int:
+    value = payload.get(name, default)
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError(f"{name} is outside the supported range")
+    return value
+
+
+def _optional_number(payload: dict[str, Any], name: str, default: float) -> float:
+    value = payload.get(name, default)
+    if isinstance(value, bool) or type(value) not in (int, float):
+        raise ValueError(f"{name} must be numeric")
+    return float(value)
 
 
 def process_request(path: str, payload: dict[str, Any]) -> object:
@@ -164,6 +219,105 @@ def process_request(path: str, payload: dict[str, Any]) -> object:
             _text(payload, "candidate_text"),
             detector=detector,
         )
+    if path == "/localize":
+        detector = payload.get("detector")
+        if type(detector) is not str or not detector or len(detector) > 256:
+            raise ValueError("detector must be a non-empty string")
+        config = replace(
+            DewatermarkConfig.from_env(),
+            allow_remote_processing=_bool(payload, "allow_network"),
+            allow_model_download=_bool(payload, "allow_model_download"),
+        )
+        session = DetectorSession(
+            detector,
+            config=config,
+            max_queries=payload.get("max_detector_queries"),
+        )
+        return localize(
+            _text(payload, nonempty=True),
+            session,
+            window_characters=_optional_int(
+                payload, "window_characters", 1200, minimum=32, maximum=10_000_000
+            ),
+            stride_characters=_optional_int(
+                payload, "stride_characters", 600, minimum=1, maximum=10_000_000
+            ),
+            familywise_alpha=_optional_number(payload, "familywise_alpha", 0.01),
+        ).to_dict()
+    if path == "/mitigate":
+        source_text = _text(payload, nonempty=True)
+        detector = payload.get("detector")
+        if type(detector) is not str or not detector or len(detector) > 256:
+            raise ValueError("detector must be a non-empty string")
+        verifiers = _identifiers(payload, "verifiers")
+        strategy_names = _identifiers(payload, "strategies")
+        consent = _mapping(
+            payload,
+            "consent",
+            allowed=("transformation", "network", "model_download"),
+        )
+        if not _bool(consent, "transformation"):
+            raise ConsentRequiredError
+        config = replace(
+            DewatermarkConfig.from_env(),
+            allow_remote_processing=_bool(consent, "network"),
+            allow_model_download=_bool(consent, "model_download"),
+        )
+        limit_values = _mapping(
+            payload,
+            "limits",
+            allowed=(
+                "max_rounds",
+                "beam_width",
+                "max_candidates",
+                "max_transform_calls",
+                "max_detector_queries",
+                "max_verification_candidates",
+            ),
+        )
+        max_candidates = _optional_int(
+            limit_values,
+            "max_candidates",
+            config.max_search_candidates,
+            minimum=1,
+            maximum=1000,
+        )
+        limits = SearchLimits(
+            max_rounds=_optional_int(limit_values, "max_rounds", 2, minimum=1, maximum=32),
+            beam_width=_optional_int(limit_values, "beam_width", 4, minimum=1, maximum=32),
+            max_candidates=max_candidates,
+            max_transform_calls=_optional_int(
+                limit_values,
+                "max_transform_calls",
+                max_candidates,
+                minimum=1,
+                maximum=1000,
+            ),
+            max_detector_queries=_optional_int(
+                limit_values,
+                "max_detector_queries",
+                config.max_detector_queries,
+                minimum=1,
+                maximum=100_000,
+            ),
+            max_candidate_characters=config.max_input_chars,
+            max_verification_candidates=_optional_int(
+                limit_values,
+                "max_verification_candidates",
+                8,
+                minimum=1,
+                maximum=128,
+            ),
+        )
+        strategies = [registered_strategy(name, config) for name in strategy_names]
+        return mitigate(
+            source_text,
+            detector,
+            strategies,
+            verifier_detectors=verifiers,
+            config=config,
+            limits=limits,
+        ).to_dict()
     raise KeyError(path)
 
 
@@ -184,6 +338,8 @@ def _operation(summary: str, schema: dict[str, Any], operation_id: str) -> dict[
         "planTransformation": "PlanResponse",
         "applyTransformation": "ApplyResponse",
         "verifyTransformation": "VerifyResponse",
+        "localizeWatermark": "LocalizationResponse",
+        "mitigateWatermark": "MitigationResponse",
         "removeWatermarkLegacy": "RemovalResponse",
     }[operation_id]
     return {
@@ -212,8 +368,45 @@ def _operation(summary: str, schema: dict[str, Any], operation_id: str) -> dict[
     }
 
 
+def _openapi_components(
+    schema: dict[str, Any], prefix: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Lift a standalone JSON Schema and its local definitions into OpenAPI."""
+    definitions = schema.get("$defs", {})
+    names = {
+        key: prefix + "".join(part[:1].upper() + part[1:] for part in key.split("_"))
+        for key in definitions
+    }
+
+    def rewrite(value: Any) -> Any:
+        if isinstance(value, dict):
+            output: dict[str, Any] = {}
+            for key, item in value.items():
+                if key in {"$schema", "$id", "$defs"}:
+                    continue
+                if key == "$ref" and type(item) is str and item.startswith("#/$defs/"):
+                    definition = item.removeprefix("#/$defs/")
+                    output[key] = f"#/components/schemas/{names[definition]}"
+                else:
+                    output[key] = rewrite(item)
+            return output
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        return value
+
+    root = rewrite(schema)
+    components = {names[key]: rewrite(value) for key, value in definitions.items()}
+    return root, components
+
+
 def openapi_schema() -> dict[str, Any]:
     """Complete OpenAPI document for humans, generators, and AI agents."""
+    localization_response, localization_components = _openapi_components(
+        localization_result_schema(), "Localization"
+    )
+    mitigation_response, mitigation_components = _openapi_components(
+        mitigation_result_schema(), "Mitigation"
+    )
     text = {"text": {"type": "string"}}
     permissions = {
         "allow_network": {"type": "boolean", "default": False},
@@ -322,6 +515,102 @@ def openapi_schema() -> dict[str, Any]:
                 },
             ),
             "verifyTransformation",
+        ),
+        "/localize": _operation(
+            "Locate detector evidence without changing text",
+            _request_schema(
+                required=("text", "detector"),
+                properties={
+                    "text": {"type": "string", "minLength": 1},
+                    "detector": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "window_characters": {
+                        "type": "integer",
+                        "minimum": 32,
+                        "maximum": 10000000,
+                        "default": 1200,
+                    },
+                    "stride_characters": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10000000,
+                        "default": 600,
+                    },
+                    "familywise_alpha": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 1,
+                        "default": 0.01,
+                    },
+                    "max_detector_queries": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100000,
+                    },
+                    **permissions,
+                },
+            ),
+            "localizeWatermark",
+        ),
+        "/mitigate": _operation(
+            "Run consent-bound detector-guided search with exact rollback",
+            _request_schema(
+                required=("text", "detector", "verifiers", "strategies", "consent"),
+                properties={
+                    "text": {"type": "string", "minLength": 1},
+                    "detector": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "verifiers": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 32,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 256},
+                    },
+                    "strategies": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 32,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 256},
+                    },
+                    "consent": {
+                        "type": "object",
+                        "required": ["transformation"],
+                        "properties": {
+                            "transformation": {"type": "boolean"},
+                            "network": {"type": "boolean", "default": False},
+                            "model_download": {"type": "boolean", "default": False},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "limits": {
+                        "type": "object",
+                        "properties": {
+                            "max_rounds": {"type": "integer", "minimum": 1, "maximum": 32},
+                            "beam_width": {"type": "integer", "minimum": 1, "maximum": 32},
+                            "max_candidates": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 1000,
+                            },
+                            "max_transform_calls": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 1000,
+                            },
+                            "max_detector_queries": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 100000,
+                            },
+                            "max_verification_candidates": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 128,
+                            },
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+            ),
+            "mitigateWatermark",
         ),
         "/remove": _operation(
             "Legacy one-step transformation; agents should use plan/apply",
@@ -456,12 +745,14 @@ def openapi_schema() -> dict[str, Any]:
             },
             "additionalProperties": False,
         },
+        "LocalizationResponse": localization_response,
+        "MitigationResponse": mitigation_response,
     }
     return {
         "openapi": "3.1.0",
         "info": {
             "title": "dewatermark assurance API",
-            "version": "1.1",
+            "version": "1.2",
             "description": (
                 "Local-first text inspection and consent-bound transformation. A changed "
                 "string is not represented as independently verified watermark removal."
@@ -477,7 +768,12 @@ def openapi_schema() -> dict[str, Any]:
             "securitySchemes": {
                 "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "opaque"}
             },
-            "schemas": {"Error": error_schema, **response_schemas},
+            "schemas": {
+                "Error": error_schema,
+                **response_schemas,
+                **localization_components,
+                **mitigation_components,
+            },
             "responses": {
                 name: {
                     "description": description,
@@ -589,7 +885,14 @@ class DewatermarkHandler(BaseHTTPRequestHandler):
         except Exception:
             self._send(500, {"error": "capability discovery failed; details redacted"})
             return
-        api_capabilities["agent_operations"] = ["inspect", "plan", "apply", "verify"]
+        api_capabilities["agent_operations"] = [
+            "inspect",
+            "plan",
+            "apply",
+            "verify",
+            "localize",
+            "mitigate",
+        ]
         routes = {
             "/health": {"status": "ok"},
             "/capabilities": api_capabilities,

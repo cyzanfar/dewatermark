@@ -1,5 +1,5 @@
 {
-  "configuration_sha256": "b773074d85f03ebd9172fb940b0bcd821e7a796575082eb5a896e5f0bd0c0dbe",
+  "configuration_sha256": "db441c4d22f42cb69ea57377660f2eacb20a0c0788084b7864acc3a78ec9d8ec",
   "delta": 2.0,
   "gamma": 0.25,
   "hash_key": 15485863,
@@ -13,6 +13,7 @@
   "seeding_scheme": "simple_1",
   "select_green_tokens": true,
   "threshold": 4.0,
+  "threshold_operator": ">",
   "torch_version": "2.4.1",
   "upstream_file_sha256": "512c40644bc9e9932a8674bbf13046c1a4e92db429cff92afc9e90d2226896fc",
   "upstream_repository": "https://github.com/jwkirchenbauer/lm-watermarking",

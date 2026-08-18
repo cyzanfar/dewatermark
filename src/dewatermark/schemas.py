@@ -10,9 +10,16 @@ from typing import Any
 _SCHEMA_FILES = {
     "removal-result": "removal-result-v1.json",
     "evidence-receipt": "evidence-receipt-v1.json",
+    "localization-result": "localization-result-v1.json",
+    "mitigation-result": "mitigation-result-v1.json",
     "detector-capability": "detector-capability-v1.json",
     "command-detector": "command-detector-protocol-v1.json",
+    "command-strategy": "command-strategy-protocol-v1.json",
     "benchmark-evidence-bundle": "benchmark-evidence-bundle-v1.json",
+    "benchmark-comparator-registry": "benchmark-comparator-registry-v1.json",
+    "benchmark-protocol-manifest": "benchmark-protocol-manifest-v1.json",
+    "benchmark-run-config": "benchmark-run-config-v1.json",
+    "benchmark-input-corpus": "benchmark-input-corpus-v1.json",
     "benchmark-observation-set": "benchmark-observation-set-v1.json",
     "benchmark-replication-record": "benchmark-replication-record-v1.json",
     "benchmark-sample-registry": "benchmark-sample-registry-v1.json",
@@ -49,6 +56,14 @@ def evidence_receipt_schema() -> dict[str, Any]:
     return public_schema("evidence-receipt")
 
 
+def localization_result_schema() -> dict[str, Any]:
+    return public_schema("localization-result")
+
+
+def mitigation_result_schema() -> dict[str, Any]:
+    return public_schema("mitigation-result")
+
+
 def detector_capability_schema() -> dict[str, Any]:
     return public_schema("detector-capability")
 
@@ -57,8 +72,28 @@ def command_detector_schema() -> dict[str, Any]:
     return public_schema("command-detector")
 
 
+def command_strategy_schema() -> dict[str, Any]:
+    return public_schema("command-strategy")
+
+
 def benchmark_evidence_bundle_schema() -> dict[str, Any]:
     return public_schema("benchmark-evidence-bundle")
+
+
+def benchmark_comparator_registry_schema() -> dict[str, Any]:
+    return public_schema("benchmark-comparator-registry")
+
+
+def benchmark_protocol_manifest_schema() -> dict[str, Any]:
+    return public_schema("benchmark-protocol-manifest")
+
+
+def benchmark_run_config_schema() -> dict[str, Any]:
+    return public_schema("benchmark-run-config")
+
+
+def benchmark_input_corpus_schema() -> dict[str, Any]:
+    return public_schema("benchmark-input-corpus")
 
 
 def benchmark_observation_set_schema() -> dict[str, Any]:

@@ -131,6 +131,1590 @@
         ],
         "type": "object"
       },
+      "LocalizationResponse": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "localized"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "method": {
+                  "enum": [
+                    "detector_attribution",
+                    "bonferroni_windows"
+                  ]
+                },
+                "spans": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "localized_exploratory"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "method": {
+                  "enum": [
+                    "detector_attribution",
+                    "exploratory_windows"
+                  ]
+                },
+                "spans": {
+                  "minItems": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "not_detected",
+                    "not_localized",
+                    "insufficient_evidence",
+                    "failed"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spans": {
+                  "maxItems": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "method": {
+                  "const": "bonferroni_windows"
+                }
+              },
+              "required": [
+                "method"
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "localized",
+                    "not_localized"
+                  ]
+                }
+              },
+              "required": [
+                "familywise_alpha",
+                "adjusted_window_alpha"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "method": {
+                  "const": "exploratory_windows"
+                }
+              },
+              "required": [
+                "method"
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "localized_exploratory",
+                    "not_localized"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "method": {
+                  "const": "detector_attribution"
+                },
+                "status": {
+                  "const": "localized"
+                }
+              },
+              "required": [
+                "status",
+                "method"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spans": {
+                  "items": {
+                    "required": [
+                      "smallest_p_value"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "method": {
+                  "const": "none"
+                }
+              },
+              "required": [
+                "method"
+              ]
+            },
+            "then": {
+              "properties": {
+                "spans": {
+                  "maxItems": 0
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "adjusted_window_alpha": {
+            "exclusiveMaximum": 1,
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "detector": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "detector_ledger": {
+            "additionalProperties": false,
+            "properties": {
+              "detector_cache_entries": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "detector_queries_limit": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "detector_queries_remaining": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "detector_queries_used": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "detector_queries_used",
+              "detector_queries_limit",
+              "detector_queries_remaining",
+              "detector_cache_entries"
+            ],
+            "type": "object"
+          },
+          "familywise_alpha": {
+            "exclusiveMaximum": 1,
+            "exclusiveMinimum": 0,
+            "type": "number"
+          },
+          "method": {
+            "enum": [
+              "detector_attribution",
+              "bonferroni_windows",
+              "exploratory_windows",
+              "none"
+            ]
+          },
+          "reason_code": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "spans": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "contributing_windows": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "end": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "smallest_p_value": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "start": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "strongest_margin": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "start",
+                "end",
+                "contributing_windows"
+              ],
+              "type": "object"
+            },
+            "maxItems": 100000,
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "localized",
+              "localized_exploratory",
+              "not_detected",
+              "not_localized",
+              "insufficient_evidence",
+              "failed"
+            ]
+          },
+          "stride_characters": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "text_characters": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "text_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "window_characters": {
+            "minimum": 32,
+            "type": "integer"
+          },
+          "windows_scored": {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "status",
+          "method",
+          "detector",
+          "text_sha256",
+          "text_characters",
+          "window_characters",
+          "stride_characters",
+          "windows_scored",
+          "spans",
+          "detector_ledger"
+        ],
+        "title": "DewatermarkLocalizationResult",
+        "type": "object"
+      },
+      "MitigationDetectionEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/MitigationEvidenceDetails"
+          },
+          "detector": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "scheme": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "status": {
+            "enum": [
+              "detected",
+              "not_detected",
+              "insufficient_evidence",
+              "unsupported",
+              "configuration_mismatch",
+              "detector_error"
+            ]
+          },
+          "text_characters": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "threshold": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "schema_version",
+          "detector",
+          "status",
+          "text_characters",
+          "details"
+        ],
+        "type": "object"
+      },
+      "MitigationDetectorObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "cached": {
+            "type": "boolean"
+          },
+          "detection_margin": {
+            "type": "number"
+          },
+          "detector": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/MitigationDetectionEvidence"
+          },
+          "localization": {
+            "items": {
+              "$ref": "#/components/schemas/MitigationSignalSpan"
+            },
+            "type": "array"
+          },
+          "p_value": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "policy_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          },
+          "query_index": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "primary",
+              "verifier"
+            ]
+          },
+          "score_direction": {
+            "enum": [
+              "higher",
+              "lower"
+            ]
+          },
+          "text_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          }
+        },
+        "required": [
+          "detector",
+          "role",
+          "text_sha256",
+          "policy_sha256",
+          "evidence",
+          "query_index",
+          "cached",
+          "localization"
+        ],
+        "type": "object"
+      },
+      "MitigationEvidenceDetails": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "threshold_operator": {
+                  "enum": [
+                    ">",
+                    ">="
+                  ]
+                }
+              },
+              "required": [
+                "threshold_operator"
+              ]
+            },
+            "then": {
+              "properties": {
+                "score_direction": {
+                  "const": "higher"
+                }
+              },
+              "required": [
+                "score_direction"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "threshold_operator": {
+                  "enum": [
+                    "<",
+                    "<="
+                  ]
+                }
+              },
+              "required": [
+                "threshold_operator"
+              ]
+            },
+            "then": {
+              "properties": {
+                "score_direction": {
+                  "const": "lower"
+                }
+              },
+              "required": [
+                "score_direction"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "configuration_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          },
+          "effective_tokens": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "green_hits": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "localization": {
+            "items": {
+              "$ref": "#/components/schemas/MitigationSignalSpan"
+            },
+            "maxItems": 4096,
+            "type": "array"
+          },
+          "mean_g_value": {
+            "type": "number"
+          },
+          "mismatch_fields": {
+            "items": {
+              "enum": [
+                "configuration_sha256",
+                "detector",
+                "protocol_version",
+                "scheme",
+                "score_direction",
+                "threshold_operator",
+                "threshold",
+                "tokenizer_revision"
+              ]
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "p_value": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "protocol_version": {
+            "pattern": "^[0-9]+\\.[0-9]+$",
+            "type": "string"
+          },
+          "reason_code": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "reference_only": {
+            "type": "boolean"
+          },
+          "reported_status": {
+            "enum": [
+              "detected",
+              "not_detected",
+              "insufficient_evidence",
+              "unsupported",
+              "configuration_mismatch",
+              "detector_error"
+            ]
+          },
+          "score_direction": {
+            "enum": [
+              "higher",
+              "lower"
+            ]
+          },
+          "threshold_operator": {
+            "enum": [
+              ">",
+              ">=",
+              "<",
+              "<="
+            ]
+          },
+          "total_flags": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "vendor_equivalent": {
+            "type": "boolean"
+          },
+          "z_score": {
+            "type": "number"
+          }
+        },
+        "type": "object"
+      },
+      "MitigationMitigationReason": {
+        "enum": [
+          "verified_clearance",
+          "source_not_detected",
+          "primary_detector_unavailable",
+          "held_out_verifier_required",
+          "no_candidates",
+          "quality_rejected",
+          "residual_signal",
+          "verification_inconclusive",
+          "held_out_residual",
+          "detector_budget_exhausted",
+          "resource_budget_exhausted"
+        ]
+      },
+      "MitigationReceipt": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "verified"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "changed": {
+                  "const": true
+                },
+                "edit_characters": {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "edit_fraction": {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                "primary_after": {
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "details": {
+                          "required": [
+                            "configuration_sha256",
+                            "score_direction",
+                            "threshold_operator"
+                          ]
+                        },
+                        "status": {
+                          "const": "not_detected"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scheme",
+                        "score",
+                        "threshold"
+                      ]
+                    },
+                    "role": {
+                      "const": "primary"
+                    }
+                  }
+                },
+                "primary_before": {
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "details": {
+                          "required": [
+                            "configuration_sha256",
+                            "score_direction",
+                            "threshold_operator"
+                          ]
+                        },
+                        "status": {
+                          "const": "detected"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scheme",
+                        "score",
+                        "threshold"
+                      ]
+                    },
+                    "role": {
+                      "const": "primary"
+                    }
+                  }
+                },
+                "quality": {
+                  "properties": {
+                    "passed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "passed"
+                  ]
+                },
+                "reason_code": {
+                  "const": "verified_clearance"
+                },
+                "verification": {
+                  "properties": {
+                    "status": {
+                      "const": "verified"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "selected_strategy",
+                "verification",
+                "primary_before",
+                "primary_after"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "enum": [
+                    "abstained",
+                    "rolled_back"
+                  ]
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "selected_strategy"
+                ]
+              },
+              "properties": {
+                "changed": {
+                  "const": false
+                },
+                "edit_characters": {
+                  "const": 0
+                },
+                "edit_fraction": {
+                  "const": 0
+                },
+                "verification": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "residual",
+                        "not_verifiable",
+                        "failed"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "claim_scope": {
+            "const": "Clearance is limited to the named detector configurations; no authorship or universal watermark inference is made."
+          },
+          "edit_characters": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "edit_fraction": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "input_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          },
+          "output_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          },
+          "primary_after": {
+            "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "primary_before": {
+            "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "quality": {
+            "type": "object"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/MitigationMitigationReason"
+          },
+          "resources": {
+            "type": "object"
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "selected_strategy": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]{0,255}$",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "abstained",
+              "rolled_back"
+            ]
+          },
+          "trace": {
+            "items": {
+              "$ref": "#/components/schemas/MitigationTraceEvent"
+            },
+            "type": "array"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/MitigationSessionVerification"
+          }
+        },
+        "required": [
+          "schema_version",
+          "status",
+          "reason_code",
+          "input_sha256",
+          "output_sha256",
+          "changed",
+          "edit_characters",
+          "edit_fraction",
+          "quality",
+          "trace",
+          "resources",
+          "claim_scope"
+        ],
+        "type": "object"
+      },
+      "MitigationResponse": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "verified"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "changed": {
+                  "const": true
+                },
+                "reason_code": {
+                  "const": "verified_clearance"
+                },
+                "receipt": {
+                  "properties": {
+                    "changed": {
+                      "const": true
+                    },
+                    "reason_code": {
+                      "const": "verified_clearance"
+                    },
+                    "status": {
+                      "const": "verified"
+                    },
+                    "verification": {
+                      "properties": {
+                        "status": {
+                          "const": "verified"
+                        }
+                      },
+                      "required": [
+                        "status"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "reason_code",
+                    "changed",
+                    "selected_strategy",
+                    "verification"
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "abstained"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "changed": {
+                  "const": false
+                },
+                "reason_code": {
+                  "enum": [
+                    "source_not_detected",
+                    "primary_detector_unavailable",
+                    "held_out_verifier_required",
+                    "detector_budget_exhausted",
+                    "resource_budget_exhausted"
+                  ]
+                },
+                "receipt": {
+                  "properties": {
+                    "changed": {
+                      "const": false
+                    },
+                    "reason_code": {
+                      "enum": [
+                        "source_not_detected",
+                        "primary_detector_unavailable",
+                        "held_out_verifier_required",
+                        "detector_budget_exhausted",
+                        "resource_budget_exhausted"
+                      ]
+                    },
+                    "status": {
+                      "const": "abstained"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "rolled_back"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "properties": {
+                "changed": {
+                  "const": false
+                },
+                "reason_code": {
+                  "enum": [
+                    "no_candidates",
+                    "quality_rejected",
+                    "residual_signal",
+                    "verification_inconclusive",
+                    "held_out_residual",
+                    "detector_budget_exhausted",
+                    "resource_budget_exhausted"
+                  ]
+                },
+                "receipt": {
+                  "properties": {
+                    "changed": {
+                      "const": false
+                    },
+                    "reason_code": {
+                      "enum": [
+                        "no_candidates",
+                        "quality_rejected",
+                        "residual_signal",
+                        "verification_inconclusive",
+                        "held_out_residual",
+                        "detector_budget_exhausted",
+                        "resource_budget_exhausted"
+                      ]
+                    },
+                    "status": {
+                      "const": "rolled_back"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "oneOf": [
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "verified_clearance"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "verified_clearance"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "source_not_detected"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "source_not_detected"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "primary_detector_unavailable"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "primary_detector_unavailable"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "held_out_verifier_required"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "held_out_verifier_required"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "no_candidates"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "no_candidates"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "quality_rejected"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "quality_rejected"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "residual_signal"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "residual_signal"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "verification_inconclusive"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "verification_inconclusive"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "held_out_residual"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "held_out_residual"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "detector_budget_exhausted"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "detector_budget_exhausted"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "reason_code": {
+                    "const": "resource_budget_exhausted"
+                  },
+                  "receipt": {
+                    "properties": {
+                      "reason_code": {
+                        "const": "resource_budget_exhausted"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "cleaned_text": {
+            "type": "string"
+          },
+          "reason_code": {
+            "$ref": "#/components/schemas/MitigationMitigationReason"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/MitigationReceipt"
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "abstained",
+              "rolled_back"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "status",
+          "reason_code",
+          "changed",
+          "cleaned_text",
+          "receipt"
+        ],
+        "title": "DewatermarkMitigationResult",
+        "type": "object"
+      },
+      "MitigationSessionVerification": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "verified"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "reason_code"
+                ]
+              },
+              "properties": {
+                "primary_after": {
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "details": {
+                          "required": [
+                            "configuration_sha256",
+                            "score_direction",
+                            "threshold_operator"
+                          ]
+                        },
+                        "status": {
+                          "const": "not_detected"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scheme",
+                        "score",
+                        "threshold"
+                      ]
+                    },
+                    "role": {
+                      "const": "primary"
+                    }
+                  }
+                },
+                "primary_before": {
+                  "properties": {
+                    "evidence": {
+                      "properties": {
+                        "details": {
+                          "required": [
+                            "configuration_sha256",
+                            "score_direction",
+                            "threshold_operator"
+                          ]
+                        },
+                        "status": {
+                          "const": "detected"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "scheme",
+                        "score",
+                        "threshold"
+                      ]
+                    },
+                    "role": {
+                      "const": "primary"
+                    }
+                  }
+                },
+                "verifiers": {
+                  "items": {
+                    "properties": {
+                      "after": {
+                        "properties": {
+                          "evidence": {
+                            "properties": {
+                              "details": {
+                                "required": [
+                                  "configuration_sha256",
+                                  "score_direction",
+                                  "threshold_operator"
+                                ]
+                              },
+                              "status": {
+                                "const": "not_detected"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "scheme",
+                              "score",
+                              "threshold"
+                            ]
+                          },
+                          "role": {
+                            "const": "verifier"
+                          }
+                        }
+                      },
+                      "before": {
+                        "properties": {
+                          "evidence": {
+                            "properties": {
+                              "details": {
+                                "required": [
+                                  "configuration_sha256",
+                                  "score_direction",
+                                  "threshold_operator"
+                                ]
+                              },
+                              "status": {
+                                "const": "detected"
+                              }
+                            },
+                            "required": [
+                              "status",
+                              "scheme",
+                              "score",
+                              "threshold"
+                            ]
+                          },
+                          "role": {
+                            "const": "verifier"
+                          }
+                        }
+                      },
+                      "verification": {
+                        "properties": {
+                          "status": {
+                            "const": "verified_cleared"
+                          }
+                        },
+                        "required": [
+                          "status",
+                          "detector",
+                          "before",
+                          "after"
+                        ]
+                      }
+                    }
+                  },
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "primary_before",
+                "primary_after"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "primary_after": {
+            "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "primary_before": {
+            "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "reason_code": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "residual",
+              "not_verifiable",
+              "failed"
+            ]
+          },
+          "verifiers": {
+            "items": {
+              "$ref": "#/components/schemas/MitigationVerifierObservation"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "status",
+          "verifiers"
+        ],
+        "type": "object"
+      },
+      "MitigationSha256": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "MitigationSignalSpan": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "p_value": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "score": {
+            "type": "number"
+          },
+          "start": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "threshold": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "MitigationTraceEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "detection_margin": {
+            "type": "number"
+          },
+          "detector_status": {
+            "type": "string"
+          },
+          "edit_characters": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "index": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "source_scored",
+              "strategy_rejected",
+              "candidate_rejected",
+              "candidate_scored",
+              "candidate_verified"
+            ]
+          },
+          "parent_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          },
+          "quality_passed": {
+            "type": "boolean"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "strategy": {
+            "type": "string"
+          },
+          "text_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
+          }
+        },
+        "required": [
+          "index",
+          "kind",
+          "status"
+        ],
+        "type": "object"
+      },
+      "MitigationVerificationEvidence": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "status": {
+                  "const": "verified_cleared"
+                }
+              },
+              "required": [
+                "status"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "reason"
+                ]
+              },
+              "properties": {
+                "after": {
+                  "properties": {
+                    "details": {
+                      "required": [
+                        "configuration_sha256",
+                        "score_direction",
+                        "threshold_operator"
+                      ]
+                    },
+                    "status": {
+                      "const": "not_detected"
+                    }
+                  },
+                  "required": [
+                    "scheme",
+                    "score",
+                    "threshold"
+                  ]
+                },
+                "before": {
+                  "properties": {
+                    "details": {
+                      "required": [
+                        "configuration_sha256",
+                        "score_direction",
+                        "threshold_operator"
+                      ]
+                    },
+                    "status": {
+                      "const": "detected"
+                    }
+                  },
+                  "required": [
+                    "scheme",
+                    "score",
+                    "threshold"
+                  ]
+                }
+              },
+              "required": [
+                "detector",
+                "before",
+                "after"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/MitigationDetectionEvidence"
+          },
+          "before": {
+            "$ref": "#/components/schemas/MitigationDetectionEvidence"
+          },
+          "detector": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0"
+          },
+          "status": {
+            "enum": [
+              "verified_cleared",
+              "residual",
+              "not_verifiable",
+              "failed"
+            ]
+          }
+        },
+        "required": [
+          "schema_version",
+          "status"
+        ],
+        "type": "object"
+      },
+      "MitigationVerifierObservation": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "properties": {
+              "after": {
+                "properties": {
+                  "role": {
+                    "const": "verifier"
+                  }
+                }
+              },
+              "before": {
+                "properties": {
+                  "role": {
+                    "const": "verifier"
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "before": {
+            "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "detector": {
+            "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/MitigationVerificationEvidence"
+          }
+        },
+        "required": [
+          "detector",
+          "before",
+          "after",
+          "verification"
+        ],
+        "type": "object"
+      },
       "PlanResponse": {
         "additionalProperties": false,
         "properties": {
@@ -314,7 +1898,7 @@
   "info": {
     "description": "Local-first text inspection and consent-bound transformation. A changed string is not represented as independently verified watermark removal.",
     "title": "dewatermark assurance API",
-    "version": "1.1"
+    "version": "1.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -560,6 +2144,228 @@
           }
         },
         "summary": "Inspect text without changing it"
+      }
+    },
+    "/localize": {
+      "post": {
+        "operationId": "localizeWatermark",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "allow_model_download": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "allow_network": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "detector": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "familywise_alpha": {
+                    "default": 0.01,
+                    "exclusiveMaximum": 1,
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  "max_detector_queries": {
+                    "maximum": 100000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "stride_characters": {
+                    "default": 600,
+                    "maximum": 10000000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "text": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "window_characters": {
+                    "default": 1200,
+                    "maximum": 10000000,
+                    "minimum": 32,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "text",
+                  "detector"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalizationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Locate detector evidence without changing text"
+      }
+    },
+    "/mitigate": {
+      "post": {
+        "operationId": "mitigateWatermark",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "consent": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "model_download": {
+                        "default": false,
+                        "type": "boolean"
+                      },
+                      "network": {
+                        "default": false,
+                        "type": "boolean"
+                      },
+                      "transformation": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "transformation"
+                    ],
+                    "type": "object"
+                  },
+                  "detector": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "limits": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "beam_width": {
+                        "maximum": 32,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "max_candidates": {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "max_detector_queries": {
+                        "maximum": 100000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "max_rounds": {
+                        "maximum": 32,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "max_transform_calls": {
+                        "maximum": 1000,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "max_verification_candidates": {
+                        "maximum": 128,
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "strategies": {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "text": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "verifiers": {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "text",
+                  "detector",
+                  "verifiers",
+                  "strategies",
+                  "consent"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MitigationResponse"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "summary": "Run consent-bound detector-guided search with exact rollback"
       }
     },
     "/plan": {

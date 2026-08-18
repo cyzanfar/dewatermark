@@ -71,7 +71,7 @@ transformers, scorers, detectors, quality gates, semantic scorers, and chunkers.
 
 The instance returned by a factory must expose exactly the same manifest as the
 registered factory. Content-bound plans record a manifest digest, an
-implementation fingerprint, a process-keyed fingerprint of observable static
+implementation fingerprint, a deterministic one-way fingerprint of observable static
 class/instance/default/closure state, and a monotonic registration revision.
 Replacing a registration—or mutating reviewed observable state—even with the
 same self-declared fields, invalidates an existing plan. Registration state is
@@ -80,8 +80,11 @@ immediately before its first text access. Explicitly re-register changed
 factories and create a new plan; create a new plan before reusing a deliberately
 stateful direct gate, scorer, or chunker. Fingerprinting is bounded and does not
 invoke extension representations, dynamic attributes, or mapping protocols.
-These identifiers disclose neither source paths, state values, nor
-implementation source.
+Credential-shaped fields, credential values, and private absolute paths are
+rejected before identity construction. The resulting identifiers do not embed
+raw state values or implementation source, but content addresses can still be
+guessable: keep every secret in an operator-managed channel, never in extension
+state.
 Extensions configured for a mode that cannot call them (for example a custom
 chunker in `sanitize`) are intentionally ignored and do not make that mode fail.
 
@@ -121,18 +124,45 @@ from dewatermark import (
     register_detector,
 )
 
-public_config = {"scheme": "example-v1", "key_fingerprint": "sha256:..."}
+public_config = {"scheme": "example-v1", "key_id": "operator-key-2026-01"}
+watermark_target = {
+    "scheme": "example-v1",
+    "key_id": "operator-key-2026-01",
+    "tokenizer": "example-tokenizer-v1",
+    "embedding_config": "example-config-v1",
+}
 manifest = command_detector_manifest(
     identifier="example-detector",
     schemes=("example",),
     configuration_sha256=detector_configuration_sha256(public_config),
+    implementation_sha256="123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
     threshold=4.0,
+    threshold_operator=">",
     calibrated=True,
     independent=True,
+    watermark_target_sha256=detector_configuration_sha256(watermark_target),
 )
 factory = make_command_detector_factory(("example-detector", "--json"), manifest)
 register_detector("example", factory)
 ```
+
+The target digest must be identical for the primary detector and every held-out
+verifier used by `mitigate()`. It identifies the watermarking target without
+publishing a secret key. Use an opaque, operator-managed key ID here; do not
+publish a hash of a low-entropy key.
+
+For a `CommandDetector` used in held-out verification,
+`implementation_sha256` must identify the complete pinned external detector
+artifact, including code and any model artifact that can change its decisions.
+It does not identify the Python wrapper, detector configuration, target, or
+secret key. Different commands that publish the same implementation digest are
+treated as aliases. The runtime additionally binds executable/code identity and
+normalizes Python comments and formatting to reject obvious aliases. This is a
+syntactic screen, not an audit of methodological independence; the operator is
+responsible for the `independent=true` declaration. A legacy command manifest without this field still supports
+ordinary detection but cannot verify mitigation. Use the exact
+`CommandDetector` wrapper: a subclass can add behavior outside the external
+implementation commitment and is therefore not accepted for verification.
 
 The command receives one versioned JSON object on stdin and returns one JSON
 object on stdout. It is launched with `shell=False`; time, stdout, and stderr
@@ -143,3 +173,88 @@ child's individual sockets, enforce finer query limits inside the adapter or an
 OS/container boundary. See
 [`schemas/command-detector-protocol-v1.json`](../schemas/command-detector-protocol-v1.json)
 and [`examples/detector_adapter.py`](../examples/detector_adapter.py).
+
+## Bounded command strategies
+
+Use `CommandStrategy` when a candidate generator needs a separate Python
+environment or has conflicting dependencies. The command proposes strings; it
+does not decide whether a string is safe or whether a watermark has cleared.
+Only `mitigate()` can accept a proposal after quality checks, primary-detector
+scoring, and held-out verification.
+
+Register a command strategy as a normal transformer provider:
+
+```python
+import sys
+from pathlib import Path
+
+from dewatermark import (
+    command_strategy_manifest,
+    make_command_strategy_factory,
+    register_provider,
+    strategy_configuration_sha256,
+)
+
+public_config = {"algorithm": "example-candidates-v1"}
+manifest = command_strategy_manifest(
+    identifier="example-command-strategy",
+    schemes=("example",),
+    configuration_sha256=strategy_configuration_sha256(public_config),
+    network_required=False,
+    model_download_possible=False,
+)
+command = (
+    sys.executable,
+    str(Path("examples/command_strategy_adapter.py").resolve()),
+)
+factory = make_command_strategy_factory(command, manifest)
+register_provider("example-command", factory)
+```
+
+`strategy_configuration_sha256()` accepts literal public JSON and refuses
+credential-shaped field names. Put only public settings and fingerprints in
+that configuration.
+
+It can then be selected in Python with
+`registered_strategy("example-command")` or from the CLI with
+`--strategy example-command`.
+
+Construction, manifest access, factory creation, and `available()` do not start
+the command. `available()` checks only whether the executable exists. The
+command runs only when `generate()` is called inside an active, consent-bound
+request.
+
+The request contains:
+
+- protocol version, action, strategy identifier, and exact configuration
+  SHA-256;
+- effective network, model-download, candidate, character, and output-token
+  bounds;
+- round number, invocation number, deterministic seed, primary-detector
+  feedback, and content-free source ranges; and
+- the current source or candidate text.
+
+The response is a closed JSON object containing the same protocol, strategy,
+and configuration identity plus an array of candidate strings. Unknown fields,
+duplicate JSON keys, non-finite values, invalid UTF-8, oversized output, too
+many candidates, or an identity mismatch fail closed. There is no implicit
+options channel.
+
+The runtime uses immutable tuple argv, `shell=False`, a stripped environment,
+bounded stdout and stderr, the shared request deadline and cancellation checks,
+and redacted failures. Network and model access require matching manifest
+declarations and explicit request permission. `requires_secret=true` fails
+closed because this generic protocol has no secret channel. Put secrets behind
+an operator-owned purpose-built adapter instead of in configuration, argv, the
+environment, or JSON.
+
+This process boundary limits data and resources, but it is not a sandbox. The
+configured executable is trusted by the operator and receives text. Use a
+container or operating-system sandbox for untrusted code.
+
+The complete wire contract is
+[`schemas/command-strategy-protocol-v1.json`](../schemas/command-strategy-protocol-v1.json).
+A runnable offline example is
+[`examples/command_strategy_adapter.py`](../examples/command_strategy_adapter.py).
+The search and rollback rules are in
+[Detector-guided mitigation](DETECTOR_GUIDED_MITIGATION.md).

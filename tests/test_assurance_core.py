@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -22,6 +24,7 @@ from dewatermark.request_context import (
     current_request_context,
     request_scope,
 )
+from dewatermark.unicode import UNICODE_POLICY
 
 OFFLINE = DewatermarkConfig(local_lm_enabled=False)
 
@@ -33,6 +36,12 @@ class LargeWordDetector:
         schemes=("test",),
         calibrated=True,
         independent=True,
+        metadata={
+            "configuration_sha256": "1" * 64,
+            "score_direction": "higher",
+            "threshold": 0.5,
+            "threshold_operator": ">=",
+        },
     )
 
     def __init__(self, _config=None):
@@ -80,6 +89,13 @@ def test_unicode_verification_is_exact_same_policy_not_independent_statistics():
     assert capability is not None
     assert capability.independent is False
     assert capability.metadata["verification_basis"] == "literal_codepoint_policy"
+    canonical_policy = json.dumps(UNICODE_POLICY, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    assert (
+        capability.metadata["configuration_sha256"] == hashlib.sha256(canonical_policy).hexdigest()
+    )
+    assert dewatermark.UNICODE_POLICY_SHA256 == capability.metadata["configuration_sha256"]
 
     result = dewatermark.remove("he\u200bllo", mode="sanitize", config=OFFLINE)
     assert result.report.transformation_status == "unicode_sanitized"
@@ -324,7 +340,7 @@ def test_batch_items_share_one_request_call_budget(monkeypatch):
     monkeypatch.setattr(dewatermark.pipeline, "_remove_with_context", fake_remove)
     results = dewatermark.pipeline.remove_many(
         ["one", "two", "three"],
-        config=replace(OFFLINE, max_remote_calls=2),
+        config=replace(OFFLINE, allow_remote_processing=True, max_remote_calls=2),
         max_workers=1,
     )
 
@@ -510,7 +526,7 @@ def test_failed_detector_object_is_never_stringified_into_public_results():
     assert result.report.detector == "custom-detector"
 
 
-def test_nested_capability_credentials_are_redacted_from_plans_and_receipts():
+def test_nested_capability_credentials_are_rejected_before_registration():
     secret = "private-nested-capability-credential"
 
     class Detector:
@@ -533,20 +549,12 @@ def test_nested_capability_credentials_are_redacted_from_plans_and_receipts():
                 text_characters=len(text),
             )
 
-    register_detector("nested-metadata-detector", Detector)
-    try:
-        planned = create_plan(
-            "plain text", "sanitize", detector="nested-metadata-detector", config=OFFLINE
-        )
-        result = dewatermark.remove(
-            "plain text", mode="sanitize", detector="nested-metadata-detector", config=OFFLINE
-        )
-    finally:
-        unregister_detector("nested-metadata-detector")
-    assert secret not in str(planned)
-    assert result.receipt is not None
-    assert secret not in str(result.receipt.to_dict())
-    assert planned["policy"]["config"]["detector"]["metadata"]["source"]["api_key"] == "<redacted>"
+    with pytest.raises(dewatermark.ConfigurationError) as caught:
+        register_detector("nested-metadata-detector", Detector)
+
+    assert secret not in str(caught.value)
+    with pytest.raises(dewatermark.ConfigurationError, match="unknown detector"):
+        detector_manifest("nested-metadata-detector")
 
 
 def test_plan_binds_detector_configuration_fingerprint_and_threshold():

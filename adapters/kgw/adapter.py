@@ -21,7 +21,7 @@ import types
 from pathlib import Path
 from typing import Any, Mapping
 
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.1"
 MAX_CONFIGURATION_BYTES = 64 * 1024
 MAX_REQUEST_BYTES = 4 * 1024 * 1024
 _TOKEN = re.compile(r"^t([0-9]{1,6})$")
@@ -40,6 +40,7 @@ _EXPECTED_CONFIGURATION_KEYS = {
     "seeding_scheme",
     "select_green_tokens",
     "threshold",
+    "threshold_operator",
     "torch_version",
     "upstream_file_sha256",
     "upstream_repository",
@@ -77,7 +78,11 @@ def _load_configuration(path: Path) -> dict[str, Any]:
     actual = hashlib.sha256(_canonical(public)).hexdigest()
     if not isinstance(declared, str) or declared != actual:
         raise ValueError("configuration_digest_mismatch")
-    if value.get("schema_version") != "1.0" or value.get("normalizers") != []:
+    if (
+        value.get("schema_version") != "1.0"
+        or value.get("normalizers") != []
+        or value.get("threshold_operator") != ">"
+    ):
         raise ValueError("configuration_unsupported")
     if value.get("upstream_revision") != "82922516930c02f8aa322765defdb5863d07a00e":
         raise ValueError("upstream_revision_mismatch")
@@ -143,6 +148,7 @@ def _base(configuration: Mapping[str, Any]) -> dict[str, Any]:
         "scheme": configuration["scheme"],
         "threshold": configuration["threshold"],
         "score_direction": "higher",
+        "threshold_operator": configuration["threshold_operator"],
         "configuration_sha256": configuration["configuration_sha256"],
     }
 
@@ -226,7 +232,7 @@ def handle(
         status = "insufficient_evidence"
         reason_code = "too_few_effective_tokens"
     else:
-        status = "detected" if z_score >= float(configuration["threshold"]) else "not_detected"
+        status = "detected" if z_score > float(configuration["threshold"]) else "not_detected"
         reason_code = None
     response = {
         **_base(configuration),

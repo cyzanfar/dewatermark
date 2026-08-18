@@ -7,7 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal
 
-AdapterPackName = Literal["kgw", "synthid"]
+AdapterPackName = Literal["kgw", "synthid", "unigram"]
 _PACK_FILES: dict[AdapterPackName, tuple[str, ...]] = {
     "kgw": (
         "README.md",
@@ -16,18 +16,48 @@ _PACK_FILES: dict[AdapterPackName, tuple[str, ...]] = {
         "capability.json",
         "conformance.py",
         "fixture-cases.json",
+        "build_natural_profile.py",
+        "green-transitions-v1.json",
+        "natural-adapter-config.json",
+        "natural-capability.json",
+        "natural-conformance-record.json",
+        "natural-fixture-cases.json",
+        "natural-profile-material.json",
+        "natural-threshold-evidence.json",
+        "natural-tokenizer.json",
+        "natural_adapter.py",
+        "natural_conformance.py",
+        "operator_adapter.py",
+        "seal_operator.py",
     ),
     "synthid": ("README.md", "adapter-manifest.template.json"),
+    "unigram": (
+        "README.md",
+        "build_natural_profile.py",
+        "green-mask-v1.json",
+        "natural-adapter-config.json",
+        "natural-capability.json",
+        "natural-conformance-record.json",
+        "natural-fixture-cases.json",
+        "natural-profile-material.json",
+        "natural-threshold-evidence.json",
+        "natural-tokenizer.json",
+        "natural_adapter.py",
+        "natural_conformance.py",
+        "operator_adapter.py",
+        "seal_operator.py",
+    ),
 }
 _MANIFEST_FILES: dict[AdapterPackName, str] = {
-    "kgw": "capability.json",
+    "kgw": "natural-capability.json",
     "synthid": "adapter-manifest.template.json",
+    "unigram": "natural-capability.json",
 }
 
 
 def _validate_name(name: str) -> AdapterPackName:
     if name not in _PACK_FILES:
-        raise ValueError("unknown adapter pack; choose 'kgw' or 'synthid'")
+        raise ValueError("unknown adapter pack; choose 'kgw', 'synthid', or 'unigram'")
     return name
 
 

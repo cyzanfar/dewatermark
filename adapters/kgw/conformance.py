@@ -32,7 +32,7 @@ def run(upstream_dir: Path, pack_dir: Path) -> dict[str, Any]:
     for vector in bundle["vectors"]:
         response = adapter.handle(
             {
-                "protocol_version": "1.0",
+                "protocol_version": "1.1",
                 "action": "detect",
                 "detector": configuration["identifier"],
                 "configuration_sha256": configuration["configuration_sha256"],
@@ -65,7 +65,7 @@ def run(upstream_dir: Path, pack_dir: Path) -> dict[str, Any]:
             }
         )
     return {
-        "protocol_version": "1.0",
+        "protocol_version": "1.1",
         "configuration_sha256": configuration["configuration_sha256"],
         "vectors_sha256": hashlib.sha256(vector_bytes).hexdigest(),
         "passed": bool(cases) and all(case["passed"] for case in cases),

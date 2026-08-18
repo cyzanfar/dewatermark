@@ -268,7 +268,7 @@ def test_cli_detector_workflow_and_openapi_schema(capsys):
 
     assert main(["detectors", "packs"]) == EXIT_OK
     packs = json.loads(capsys.readouterr().out)
-    assert {item["name"] for item in packs["packs"]} == {"kgw", "synthid"}
+    assert {item["name"] for item in packs["packs"]} == {"kgw", "synthid", "unigram"}
 
     assert main(["schema", "--kind", "openapi"]) == EXIT_OK
     openapi = json.loads(capsys.readouterr().out)

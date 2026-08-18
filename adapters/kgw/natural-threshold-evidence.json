@@ -1,0 +1,10 @@
+{
+  "claim_limit": "analytical reference threshold; no empirical false-positive claim",
+  "empirical_calibration": false,
+  "minimum_effective_tokens": 32,
+  "null_approximation": "Binomial(T, gamma) with a one-sided standard-normal survival value",
+  "schema_version": "1.0",
+  "score": "z_score",
+  "threshold": 4.0,
+  "threshold_operator": ">"
+}

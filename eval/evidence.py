@@ -14,9 +14,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
 from dewatermark.bounded_process import BoundedProcessFailure, run_bounded_process
+from dewatermark.models import _unsafe_public_text
 
 try:
-    from .manifest import canonical_json, json_safe
+    from .manifest import StrictJSONError, canonical_json, json_safe, strict_json_loads
     from .protocol import (
         ProtocolValidationError,
         load_protocol_registry,
@@ -25,6 +26,7 @@ try:
     )
     from .public_codes import (
         DETECTOR_LIMITATION_CODES,
+        HOST_ERROR_CLASS_CODES,
         HUMAN_REVIEW_REASON_CODES,
         METRIC_NARRATIVE_CODES,
         REPRODUCIBILITY_BLOCKER_CODES,
@@ -34,7 +36,12 @@ try:
     )
     from .resources import scrubbed_subprocess_environment, zero_network_telemetry
 except ImportError:  # direct-script compatibility
-    from manifest import canonical_json, json_safe  # type: ignore
+    from manifest import (  # type: ignore
+        StrictJSONError,
+        canonical_json,
+        json_safe,
+        strict_json_loads,
+    )
     from protocol import (  # type: ignore
         ProtocolValidationError,
         load_protocol_registry,
@@ -43,6 +50,7 @@ except ImportError:  # direct-script compatibility
     )
     from public_codes import (  # type: ignore
         DETECTOR_LIMITATION_CODES,
+        HOST_ERROR_CLASS_CODES,
         HUMAN_REVIEW_REASON_CODES,
         METRIC_NARRATIVE_CODES,
         REPRODUCIBILITY_BLOCKER_CODES,
@@ -131,6 +139,21 @@ _PUBLIC_RESULT_FIELDS = {
     "sample_registry_sha256",
     "groups",
     "cross_detector_confusion",
+    "comparative_analysis",
+    "score_tables",
+    "failure_classes",
+    "coverage",
+    "resource_telemetry",
+}
+_AGGREGATION_CONTRACT_VERSION = "1.1"
+_STRICT_AGGREGATE_RESULT_FIELDS = {
+    "schema_version",
+    "classification",
+    "aggregate_sha256",
+    "observation_set_id",
+    "sample_registry_sha256",
+    "groups",
+    "cross_detector_confusion",
     "score_tables",
     "failure_classes",
     "coverage",
@@ -143,12 +166,21 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "artifact_handling",
     "attempt_outcomes",
     "attempted_denominator",
+    "adjusted_p_value",
+    "alpha",
     "both_flagged",
     "calibration_null",
     "candidate_calibration",
     "candidate_effective_tokens",
     "candidate_score",
     "candidate_threshold",
+    "attempt_count",
+    "condition_attempts",
+    "control_attempts",
+    "condition_cluster_wins",
+    "control_cluster_wins",
+    "cluster_ties",
+    "condition_only_successes",
     "clear_rate",
     "clear_rate_ci95_condition",
     "clear_rate_cluster_bootstrap_ci95",
@@ -160,6 +192,8 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "code",
     "cohort",
     "condition_id",
+    "control_condition_id",
+    "control_only_successes",
     "counts_by_stratum",
     "cross_only",
     "denominator_policy",
@@ -176,6 +210,7 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "empirical_fpr",
     "empirical_fpr_row_level_wilson_ci95",
     "estimable",
+    "estimable_hypotheses",
     "estimated_cost",
     "factual_qa",
     "failed",
@@ -188,6 +223,7 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "false_insertion_rate_conditional_row_level_wilson_ci95",
     "false_insertion_rate_row_level_wilson_ci95",
     "false_positives",
+    "family_hypotheses",
     "final_human_control",
     "final_matched_null",
     "final_positive",
@@ -232,6 +268,8 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "observed",
     "observed_languages",
     "paired_outcomes",
+    "paired_samples",
+    "paired_clusters",
     "peak_rss",
     "positive_flag_rate_after",
     "positive_flag_rate_before",
@@ -244,7 +282,9 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "quality_gate_passed",
     "quality_preservation",
     "reason",
+    "reason_code",
     "reason_codes",
+    "raw_p_value",
     "recommended_null_clusters",
     "recommended_null_samples",
     "recommended_test_null_clusters",
@@ -255,6 +295,7 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "requested_fpr",
     "resampling_unit",
     "residual",
+    "reject_null",
     "resource_accounting",
     "row_level_interval_scope",
     "sample_count",
@@ -271,6 +312,7 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "state",
     "strata",
     "structured_data",
+    "success_rate_difference",
     "summarization",
     "task",
     "task_check_passed",
@@ -283,6 +325,7 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "test_fpr_before_row_level_wilson_ci95",
     "test_null_clusters",
     "test_null_samples",
+    "tests",
     "threshold",
     "threshold_operator",
     "tpr_after",
@@ -293,8 +336,10 @@ _PUBLIC_RESULT_KEYS = _PUBLIC_RESULT_FIELDS | {
     "tpr_before_row_level_wilson_ci95",
     "transformation_state",
     "translation",
+    "tested_hypotheses",
     "tuning_key_count",
     "unit",
+    "unavailable_hypotheses",
     "value",
     "wall_time",
 }
@@ -312,20 +357,22 @@ _PUBLIC_RESULT_IDENTIFIER_FIELDS = {
     "code",
     "cohort",
     "condition_id",
+    "control_condition_id",
     "detector_id",
     "language",
     "length_bin",
+    "reason_code",
     "sample_id",
     "task",
 }
 _PUBLIC_RESULT_DIGEST_FIELDS = {
     "aggregate_sha256",
-    "key_fingerprint",
     "observation_set_id",
     "sample_registry_sha256",
     "score_table_sha256",
     "sha256",
 }
+_PUBLIC_RESULT_OPAQUE_KEY_ID_FIELDS = {"key_fingerprint"}
 _PUBLIC_DETECTOR_MANIFEST_FIELDS = {
     "schema_version",
     "id",
@@ -340,6 +387,10 @@ _PUBLIC_DETECTOR_MANIFEST_FIELDS = {
     "minimum_effective_tokens",
     "minimum_tokens",
     "configuration_sha256",
+    "implementation_sha256",
+    "model_sha256",
+    "tokenizer_sha256",
+    "source_sha256",
     "model_revision",
     "tokenizer_revision",
     "golden_conformance",
@@ -347,17 +398,12 @@ _PUBLIC_DETECTOR_MANIFEST_FIELDS = {
     "model_download_required",
     "reproducibility_blockers",
     "sidecar_sha256",
+    "command_sha256",
+    "command_identity",
+    "executable_digests",
+    "reproducible",
     "limitations",
 }
-_SECRET_VALUE_PATTERNS = (
-    re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}\b"),
-    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
-    re.compile(r"(?i)\b(?:sk|rk)-(?:live|test|proj|ant)?[-_A-Za-z0-9]{8,}\b"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bAIza[0-9A-Za-z_-]{30,}\b"),
-)
-_ABSOLUTE_PRIVATE_PATH = re.compile(r"^(?:/|~[/\\]|[A-Za-z]:[/\\]|\\\\)")
 
 
 class EvidenceValidationError(ValueError):
@@ -416,14 +462,7 @@ def _contains_forbidden_fields(value: Any) -> bool:
 
 def _unsafe_public_string(value: str) -> bool:
     """Reject credential material and host-local paths even under benign keys."""
-    if len(value) > 4096 or any(character in value for character in ("\x00", "\r", "\n")):
-        return True
-    stripped = value.strip()
-    if _ABSOLUTE_PRIVATE_PATH.match(stripped):
-        return True
-    if re.search(r"(?i)\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@", stripped):
-        return True
-    return any(pattern.search(value) for pattern in _SECRET_VALUE_PATTERNS)
+    return _unsafe_public_text(value)
 
 
 def _require_public_values(value: Any) -> None:
@@ -515,12 +554,16 @@ def _validate_result_strings(value: Any, *, parent: str | None = None) -> None:
         if not _SHA256.fullmatch(value):
             raise EvidenceValidationError("evidence result digest is invalid")
         return
+    if parent in _PUBLIC_RESULT_OPAQUE_KEY_ID_FIELDS:
+        if not _SHA256.fullmatch(value):
+            raise EvidenceValidationError("evidence opaque key partition ID is invalid")
+        return
     if parent in _PUBLIC_RESULT_IDENTIFIER_FIELDS:
         if not is_public_token(value):
             raise EvidenceValidationError("evidence result identifier is invalid")
         return
     if parent == "threshold_operator":
-        if value != ">":
+        if value not in {">", ">=", "<", "<="}:
             raise EvidenceValidationError("evidence threshold operator is unsupported")
         return
     if parent in {"cluster_resampling_unit", "resampling_unit"}:
@@ -559,6 +602,134 @@ def _numeric_array(value: Any) -> bool:
     )
 
 
+def results_identity(value: Mapping[str, Any]) -> str:
+    """Return the canonical identity of a public result without its identity field."""
+    payload = {key: item for key, item in value.items() if key != "aggregate_sha256"}
+    return _sha256_bytes(canonical_json(payload).encode("utf-8"))
+
+
+def _validate_cluster_comparative_analysis(value: Any) -> None:
+    if type(value) is not dict or set(value) != {
+        "method",
+        "alpha",
+        "control_condition_id",
+        "tested_hypotheses",
+        "estimable_hypotheses",
+        "unavailable_hypotheses",
+        "tests",
+    }:
+        raise EvidenceValidationError("cluster comparative analysis fields are incomplete")
+    alpha = value.get("alpha")
+    tests = value.get("tests")
+    if (
+        value.get("method") != "holm_bonferroni_cluster_paired_sign_test"
+        or type(alpha) not in (int, float)
+        or not math.isfinite(float(alpha))
+        or not 0 < alpha < 1
+        or not is_public_token(value.get("control_condition_id"))
+        or type(tests) is not list
+    ):
+        raise EvidenceValidationError("cluster comparative analysis is invalid")
+    required = {
+        "detector_id",
+        "requested_fpr",
+        "condition_id",
+        "control_condition_id",
+        "estimable",
+        "reason_code",
+        "paired_clusters",
+        "paired_samples",
+        "condition_attempts",
+        "control_attempts",
+        "condition_cluster_wins",
+        "control_cluster_wins",
+        "cluster_ties",
+        "success_rate_difference",
+        "raw_p_value",
+        "adjusted_p_value",
+        "reject_null",
+        "family_hypotheses",
+    }
+    families: dict[tuple[str, float], list[dict[str, Any]]] = {}
+    for test in tests:
+        if type(test) is not dict or set(test) != required:
+            raise EvidenceValidationError("cluster comparison row fields are incomplete")
+        if (
+            not is_public_token(test.get("detector_id"))
+            or not is_public_token(test.get("condition_id"))
+            or test.get("control_condition_id") != value["control_condition_id"]
+            or type(test.get("requested_fpr")) not in (int, float)
+            or not 0 < test["requested_fpr"] < 1
+            or type(test.get("estimable")) is not bool
+            or type(test.get("reject_null")) is not bool
+        ):
+            raise EvidenceValidationError("cluster comparison row identity is invalid")
+        for key in (
+            "paired_clusters",
+            "paired_samples",
+            "condition_attempts",
+            "control_attempts",
+            "condition_cluster_wins",
+            "control_cluster_wins",
+            "cluster_ties",
+            "family_hypotheses",
+        ):
+            if type(test.get(key)) is not int or test[key] < 0:
+                raise EvidenceValidationError("cluster comparison count is invalid")
+        for key in ("raw_p_value", "adjusted_p_value"):
+            item = test.get(key)
+            if (
+                type(item) not in (int, float)
+                or not math.isfinite(float(item))
+                or not 0 <= item <= 1
+            ):
+                raise EvidenceValidationError("cluster comparison p-value is invalid")
+        difference = test.get("success_rate_difference")
+        if difference is not None and (
+            type(difference) not in (int, float)
+            or not math.isfinite(float(difference))
+            or not -1 <= difference <= 1
+        ):
+            raise EvidenceValidationError("cluster comparison effect is invalid")
+        if test["estimable"]:
+            if test.get("reason_code") is not None or difference is None:
+                raise EvidenceValidationError("estimable comparison metadata is inconsistent")
+        elif (
+            not is_public_token(test.get("reason_code"))
+            or difference is not None
+            or test["raw_p_value"] != 1.0
+            or test["reject_null"] is not False
+        ):
+            raise EvidenceValidationError("unavailable comparison must be an explicit p=1 row")
+        family_key = (str(test["detector_id"]), float(test["requested_fpr"]))
+        families.setdefault(family_key, []).append(test)
+    if (
+        value.get("tested_hypotheses") != len(tests)
+        or value.get("estimable_hypotheses") != sum(test["estimable"] for test in tests)
+        or value.get("unavailable_hypotheses") != sum(not test["estimable"] for test in tests)
+    ):
+        raise EvidenceValidationError("comparative hypothesis counts are inconsistent")
+    for family in families.values():
+        if len({test["condition_id"] for test in family}) != len(family) or any(
+            test["family_hypotheses"] != len(family) for test in family
+        ):
+            raise EvidenceValidationError("Holm family size is not the registered row count")
+        raw = [float(test["raw_p_value"]) for test in family]
+        order = sorted(range(len(raw)), key=lambda index: (raw[index], index))
+        expected = [1.0] * len(raw)
+        running = 0.0
+        for rank, index in enumerate(order):
+            running = max(running, min(1.0, (len(raw) - rank) * raw[index]))
+            expected[index] = running
+        for test, adjusted in zip(family, expected):
+            if not math.isclose(
+                float(test["adjusted_p_value"]), adjusted, rel_tol=0.0, abs_tol=1e-15
+            ):
+                raise EvidenceValidationError("Holm adjusted p-value is inconsistent")
+            if test["reject_null"] != bool(test["estimable"] and adjusted <= alpha):
+                raise EvidenceValidationError("Holm rejection decision is inconsistent")
+
+
 def _validate_public_results(value: Any) -> dict[str, Any]:
     """Validate the closed v1 aggregate/result vocabulary."""
     if type(value) is not dict or not set(value) <= _PUBLIC_RESULT_FIELDS:
@@ -566,6 +737,9 @@ def _validate_public_results(value: Any) -> dict[str, Any]:
     _require_plain_tree(value)
     _require_public_values(value)
     _validate_result_keys(value)
+    comparative = value.get("comparative_analysis")
+    if comparative is not None:
+        _validate_cluster_comparative_analysis(comparative)
     _validate_result_strings(value)
     for key in ("positive_scores", "calibration_null_scores", "test_null_scores"):
         if key in value and not _numeric_array(value[key]):
@@ -576,6 +750,8 @@ def _validate_public_results(value: Any) -> dict[str, Any]:
     for key in ("aggregate_sha256", "observation_set_id", "sample_registry_sha256"):
         if key in value and (type(value[key]) is not str or not _SHA256.fullmatch(value[key])):
             raise EvidenceValidationError("evidence result digest is invalid")
+    if "aggregate_sha256" in value and value["aggregate_sha256"] != results_identity(value):
+        raise EvidenceValidationError("evidence aggregate content digest mismatch")
     if "schema_version" in value and value["schema_version"] != "1.0":
         raise EvidenceValidationError("evidence result schema version is unsupported")
     if "classification" in value and (
@@ -644,10 +820,36 @@ def _validate_public_detector_manifest(value: Any) -> None:
     for key in (
         "configuration_sha256",
         "sidecar_sha256",
+        "command_sha256",
+        "implementation_sha256",
+        "model_sha256",
+        "tokenizer_sha256",
+        "source_sha256",
     ):
         item = value.get(key)
         if item is not None and (type(item) is not str or not _SHA256.fullmatch(item)):
             raise EvidenceValidationError("observation detector manifest digest is invalid")
+    if value.get("command_identity") is not None and value["command_identity"] != "public-shape-v1":
+        raise EvidenceValidationError("observation detector command identity is invalid")
+    if value.get("reproducible") is not None and type(value["reproducible"]) is not bool:
+        raise EvidenceValidationError("observation detector reproducibility flag is invalid")
+    executable = value.get("executable_digests")
+    if executable is not None:
+        if type(executable) is not list:
+            raise EvidenceValidationError("observation detector executable digests are invalid")
+        for item in executable:
+            if (
+                type(item) is not dict
+                or set(item) != {"argument_index", "basename", "sha256"}
+                or type(item.get("argument_index")) is not int
+                or item["argument_index"] < 0
+                or not is_public_token(item.get("basename"))
+                or type(item.get("sha256")) is not str
+                or not _SHA256.fullmatch(item["sha256"])
+            ):
+                raise EvidenceValidationError(
+                    "observation detector executable digest entry is invalid"
+                )
     golden = value.get("golden_conformance")
     if golden is not None:
         allowed = {"passed", "vectors_sha256", "report_sha256"}
@@ -738,7 +940,11 @@ def _validate_public_observation_artifact(value: dict[str, Any]) -> None:
     payload = {key: item for key, item in value.items() if key != "observation_set_id"}
     if _sha256_bytes(canonical_json(payload).encode("utf-8")) != identity:
         raise EvidenceValidationError("observation-set content digest mismatch")
-    _validate_public_manifest(value.get("run_manifest"))
+    run_manifest = value.get("run_manifest")
+    _validate_public_manifest(run_manifest)
+    strict_aggregate = (
+        type(run_manifest) is dict and run_manifest.get("aggregation_contract_version") == "1.1"
+    )
     detectors = value.get("detectors")
     if type(detectors) is not list or not detectors:
         raise EvidenceValidationError("observation detector index must be a non-empty array")
@@ -812,8 +1018,31 @@ def _validate_public_observation_artifact(value: dict[str, Any]) -> None:
         "generated_tokens",
         "estimated_cost_usd",
     }
+
+    def validate_attempt_telemetry(telemetry: Any) -> None:
+        if type(telemetry) is not dict or set(telemetry) != telemetry_fields:
+            raise EvidenceValidationError("observation row telemetry is invalid")
+        wall = telemetry.get("wall_time_seconds")
+        if type(wall) not in (int, float) or not math.isfinite(float(wall)) or wall < 0:
+            raise EvidenceValidationError("observation row telemetry is invalid")
+        peak = telemetry.get("peak_rss_bytes")
+        if peak is not None and (type(peak) is not int or peak < 0):
+            raise EvidenceValidationError("observation row telemetry is invalid")
+        for key in ("remote_queries", "generated_tokens"):
+            item = telemetry.get(key)
+            if item is not None and (type(item) is not int or item < 0):
+                raise EvidenceValidationError("observation row telemetry is invalid")
+        cost = telemetry.get("estimated_cost_usd")
+        if cost is not None and (
+            type(cost) not in (int, float) or not math.isfinite(float(cost)) or cost < 0
+        ):
+            raise EvidenceValidationError("observation row telemetry is invalid")
+
     for row in observations:
-        if type(row) is not dict or set(row) != row_fields:
+        if type(row) is not dict or set(row) not in (
+            row_fields,
+            row_fields | {"attempt_history"},
+        ):
             raise EvidenceValidationError("observation row fields are incomplete")
         if not is_public_token(row.get("sample_id")):
             raise EvidenceValidationError("observation sample id is invalid")
@@ -839,26 +1068,93 @@ def _validate_public_observation_artifact(value: dict[str, Any]) -> None:
         error = row.get("error_class")
         if error is not None and not is_public_token(error):
             raise EvidenceValidationError("observation error class is invalid")
+        if strict_aggregate and error is not None and error not in HOST_ERROR_CLASS_CODES:
+            raise EvidenceValidationError("observation error class is not a registered host code")
         telemetry = row.get("telemetry")
-        if type(telemetry) is not dict or set(telemetry) != telemetry_fields:
-            raise EvidenceValidationError("observation row telemetry is invalid")
-        for key in ("wall_time_seconds", "estimated_cost_usd"):
-            item = telemetry.get(key)
-            if type(item) not in (int, float) or not math.isfinite(float(item)) or item < 0:
-                raise EvidenceValidationError("observation row telemetry is invalid")
-        peak = telemetry.get("peak_rss_bytes")
-        if peak is not None and (type(peak) is not int or peak < 0):
-            raise EvidenceValidationError("observation row telemetry is invalid")
-        for key in ("remote_queries", "generated_tokens"):
-            item = telemetry.get(key)
-            if type(item) is not int or item < 0:
-                raise EvidenceValidationError("observation row telemetry is invalid")
+        validate_attempt_telemetry(telemetry)
+        history = row.get("attempt_history")
+        if history is not None:
+            if type(history) is not list or not history:
+                raise EvidenceValidationError("observation attempt history is invalid")
+            for index, attempt in enumerate(history, 1):
+                if type(attempt) is not dict or set(attempt) != {
+                    "attempt_index",
+                    "state",
+                    "error_class",
+                    "telemetry",
+                    "telemetry_complete",
+                }:
+                    raise EvidenceValidationError("observation attempt history is invalid")
+                if attempt.get("attempt_index") != index or attempt.get("state") not in {
+                    "accepted",
+                    "failed",
+                    "abstained",
+                }:
+                    raise EvidenceValidationError("observation attempt history is invalid")
+                if attempt.get("error_class") is not None and not is_public_token(
+                    attempt["error_class"]
+                ):
+                    raise EvidenceValidationError("observation attempt history is invalid")
+                if (
+                    strict_aggregate
+                    and attempt.get("error_class") is not None
+                    and attempt["error_class"] not in HOST_ERROR_CLASS_CODES
+                ):
+                    raise EvidenceValidationError(
+                        "observation attempt error class is not a registered host code"
+                    )
+                if type(attempt.get("telemetry_complete")) is not bool:
+                    raise EvidenceValidationError("observation attempt history is invalid")
+                validate_attempt_telemetry(attempt.get("telemetry"))
     resource = value.get("resource_summary")
-    if type(resource) is not dict or set(resource) != {"model_size_bytes"}:
+    if type(resource) is not dict or set(resource) not in (
+        {"model_size_bytes"},
+        {
+            "model_size_bytes",
+            "execution_budget",
+            "adapter_processes",
+            "adapter_process_resources",
+            "run_attempts",
+        },
+    ):
         raise EvidenceValidationError("observation resource summary is invalid")
     model_size = resource.get("model_size_bytes")
     if model_size is not None and (type(model_size) is not int or model_size < 0):
         raise EvidenceValidationError("observation model size is invalid")
+    if "execution_budget" in resource:
+        execution = resource["execution_budget"]
+        if type(execution) is not dict or set(execution) != {
+            "limits",
+            "usage",
+            "deadline_at_unix",
+        }:
+            raise EvidenceValidationError("observation execution budget is invalid")
+        for section in ("limits", "usage"):
+            if type(execution.get(section)) is not dict or any(
+                type(item) is not int or item < 0 for item in execution[section].values()
+            ):
+                raise EvidenceValidationError("observation execution budget is invalid")
+        deadline = execution.get("deadline_at_unix")
+        if type(deadline) not in (int, float) or not math.isfinite(float(deadline)):
+            raise EvidenceValidationError("observation execution budget is invalid")
+        for section in ("adapter_processes", "run_attempts"):
+            if type(resource.get(section)) is not dict or any(
+                type(item) is not int or item < 0 for item in resource[section].values()
+            ):
+                raise EvidenceValidationError("observation resource summary is invalid")
+        process_resources = resource.get("adapter_process_resources")
+        if type(process_resources) is not dict or set(process_resources) != {
+            "telemetry_complete",
+            "wall_time_seconds",
+            "peak_rss_bytes",
+            "remote_queries",
+            "generated_tokens",
+            "estimated_cost_usd",
+        }:
+            raise EvidenceValidationError("observation process resources are invalid")
+        if type(process_resources.get("telemetry_complete")) is not bool:
+            raise EvidenceValidationError("observation process resources are invalid")
+        validate_attempt_telemetry({key: process_resources[key] for key in telemetry_fields})
     _validate_public_human_review(value.get("human_review"))
     _validate_reproduction(value.get("reproduction"))
 
@@ -871,6 +1167,31 @@ def _validate_public_json_artifact(value: Any) -> None:
     _require_public_values(value)
     keys = set(value)
     if keys == {"aggregate"} and type(value.get("aggregate")) is bool:
+        return
+    comparator_fields = {
+        "schema_version",
+        "registry_id",
+        "classification",
+        "frozen",
+        "control_condition_id",
+        "analysis",
+        "conditions",
+    }
+    if keys == comparator_fields:
+        try:
+            from .comparisons import ComparatorValidationError, validate_comparator_registry
+        except ImportError:
+            from comparisons import (  # type: ignore
+                ComparatorValidationError,
+                validate_comparator_registry,
+            )
+
+        try:
+            validate_comparator_registry(value)
+        except ComparatorValidationError:
+            raise EvidenceValidationError(
+                "JSON evidence artifact violates the comparator-registry contract"
+            ) from None
         return
     if "samples" in keys:
         try:
@@ -1003,8 +1324,8 @@ def artifact_descriptor(
     byte_digest = _sha256_bytes(data)
     canonical_digest = byte_digest
     try:
-        parsed = json.loads(data.decode("utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        parsed = strict_json_loads(data)
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise EvidenceValidationError("JSON evidence artifact is not readable JSON") from None
     _require_plain_tree(parsed)
     if _contains_forbidden_fields(parsed):
@@ -1082,10 +1403,10 @@ def load_replay_recipe(path: Path) -> dict[str, Any]:
             MAX_REPLAY_RECIPE_BYTES,
             "replay recipe is not a bounded regular file",
         )
-        value = json.loads(data.decode("utf-8"))
+        value = strict_json_loads(data)
     except EvidenceValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise EvidenceValidationError("replay recipe is not readable bounded JSON") from None
     return _validate_replay_recipe(value)
 
@@ -1392,14 +1713,15 @@ def _validate_artifact_descriptors(entries: Any) -> None:
             raise EvidenceValidationError("evidence artifact exceeds the size limit")
 
 
-def _validate_artifacts(entries: Any, root: Path) -> None:
+def _validate_artifacts(entries: Any, root: Path) -> list[tuple[Mapping[str, Any], Any]]:
     _validate_artifact_descriptors(entries)
     if not entries:
-        return
+        return []
     try:
         resolved_root = root.resolve(strict=True)
     except OSError:
         raise EvidenceValidationError("artifact root is not an accessible directory") from None
+    validated: list[tuple[Mapping[str, Any], Any]] = []
     for item in entries:
         portable = _relative_path(item.get("path"), "artifact path")
         digest = item["sha256"]
@@ -1423,8 +1745,8 @@ def _validate_artifacts(entries: Any, root: Path) -> None:
         if len(data) != size or _sha256_bytes(data) != digest:
             raise EvidenceValidationError("artifact digest mismatch")
         try:
-            parsed = json.loads(data.decode("utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
+            parsed = strict_json_loads(data)
+        except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
             raise EvidenceValidationError("JSON artifact is not readable bounded data") from None
         _require_plain_tree(parsed)
         if _contains_forbidden_fields(parsed):
@@ -1433,6 +1755,209 @@ def _validate_artifacts(entries: Any, root: Path) -> None:
         observed_canonical = _sha256_bytes(canonical_json(parsed).encode("utf-8"))
         if observed_canonical != canonical_digest:
             raise EvidenceValidationError("artifact canonical digest mismatch")
+        validated.append((item, parsed))
+    return validated
+
+
+def _validate_bundle_artifact_graph(
+    bundle: Mapping[str, Any],
+    artifacts: Sequence[tuple[Mapping[str, Any], Any]] | None = None,
+) -> None:
+    """Bind every benchmark identity to one coherent sample/observation graph."""
+    sample_reference = bundle.get("sample_registry")
+    results = bundle.get("results")
+    if type(results) is not dict:
+        raise EvidenceValidationError("bundle results must be a plain object")
+    result_sample_digest = results.get("sample_registry_sha256")
+    result_observation_id = results.get("observation_set_id")
+    manifest = bundle.get("manifest")
+    contract_version = (
+        manifest.get("aggregation_contract_version") if type(manifest) is dict else None
+    )
+    if contract_version not in {None, _AGGREGATION_CONTRACT_VERSION}:
+        raise EvidenceValidationError("bundle aggregation contract is unsupported")
+    strict_aggregate = contract_version == _AGGREGATION_CONTRACT_VERSION
+    if strict_aggregate:
+        expected_fields = set(_STRICT_AGGREGATE_RESULT_FIELDS)
+        if "comparative_analysis" in results:
+            expected_fields.add("comparative_analysis")
+        if set(results) != expected_fields:
+            raise EvidenceValidationError("bound aggregate results are incomplete")
+        replicates = manifest.get("bootstrap_replicates_count")
+        seed = manifest.get("bootstrap_seed_count")
+        if (
+            type(replicates) is not int
+            or not 2 <= replicates <= 10_000
+            or type(seed) is not int
+            or not 0 <= seed <= (1 << 63) - 1
+        ):
+            raise EvidenceValidationError("bound aggregate bootstrap settings are invalid")
+
+    if sample_reference is None:
+        if strict_aggregate:
+            raise EvidenceValidationError("bound aggregate requires a sample registry")
+        if result_sample_digest is not None or result_observation_id is not None:
+            raise EvidenceValidationError("bundle result identities require a sample registry")
+        if artifacts is not None and any(
+            type(value) is dict and ("samples" in value or "observations" in value)
+            for _, value in artifacts
+        ):
+            raise EvidenceValidationError("bundle contains an undeclared benchmark artifact graph")
+        return
+
+    assert isinstance(sample_reference, Mapping)
+    expected_sample_digest = sample_reference["sha256"]
+    if result_sample_digest != expected_sample_digest:
+        raise EvidenceValidationError("bundle results reference another sample registry")
+    if type(result_observation_id) is not str or not _SHA256.fullmatch(result_observation_id):
+        raise EvidenceValidationError("bundle results require an observation-set identity")
+
+    descriptor_matches = sum(
+        item.get("canonical_sha256") == expected_sample_digest
+        for item in bundle.get("artifacts", [])
+        if isinstance(item, Mapping)
+    )
+    if descriptor_matches != 1:
+        raise EvidenceValidationError("bundle must declare exactly one sample registry artifact")
+    comparator_digest = manifest.get("comparator_registry_sha256") if strict_aggregate else None
+    comparator_declared = bool(
+        type(comparator_digest) is str and _SHA256.fullmatch(comparator_digest)
+    )
+    comparative_present = "comparative_analysis" in results
+    if strict_aggregate and comparator_declared != comparative_present:
+        raise EvidenceValidationError(
+            "bound aggregate comparator declaration and analysis do not match"
+        )
+    if strict_aggregate and comparator_declared:
+        if (
+            sum(
+                item.get("canonical_sha256") == comparator_digest
+                for item in bundle.get("artifacts", [])
+                if isinstance(item, Mapping)
+            )
+            != 1
+        ):
+            raise EvidenceValidationError(
+                "bound aggregate requires exactly one comparator registry artifact"
+            )
+    if artifacts is None:
+        return
+
+    sample_artifacts = [
+        (descriptor, value)
+        for descriptor, value in artifacts
+        if type(value) is dict and "samples" in value
+    ]
+    observation_artifacts = [
+        (descriptor, value)
+        for descriptor, value in artifacts
+        if type(value) is dict and "observations" in value
+    ]
+    comparator_artifacts = [
+        (descriptor, value)
+        for descriptor, value in artifacts
+        if type(value) is dict
+        and set(value)
+        == {
+            "schema_version",
+            "registry_id",
+            "classification",
+            "frozen",
+            "control_condition_id",
+            "analysis",
+            "conditions",
+        }
+    ]
+    if len(sample_artifacts) != 1 or len(observation_artifacts) != 1:
+        raise EvidenceValidationError(
+            "bundle requires exactly one sample registry and one observation set artifact"
+        )
+    sample_descriptor, sample_registry = sample_artifacts[0]
+    _, observation_set = observation_artifacts[0]
+
+    try:
+        from .observations import ObservationValidationError, validate_observation_set
+        from .protocol import validate_sample_registry
+    except ImportError:
+        from observations import (  # type: ignore
+            ObservationValidationError,
+            validate_observation_set,
+        )
+        from protocol import validate_sample_registry  # type: ignore
+
+    try:
+        sample_report = validate_sample_registry(sample_registry)
+        observation_report = validate_observation_set(observation_set, sample_registry)
+    except (ObservationValidationError, ProtocolValidationError, ValueError):
+        raise EvidenceValidationError("bundle benchmark artifact graph is inconsistent") from None
+    if (
+        sample_descriptor.get("canonical_sha256") != sample_report["sample_registry_sha256"]
+        or sample_report["sample_registry_sha256"] != expected_sample_digest
+        or sample_report["sample_count"] != sample_reference["sample_count"]
+        or observation_report["observation_set_id"] != result_observation_id
+        or observation_set.get("sample_registry_sha256") != expected_sample_digest
+        or results.get("sample_registry_sha256") != expected_sample_digest
+        or results.get("observation_set_id") != observation_set.get("observation_set_id")
+        or bundle.get("manifest") != observation_set.get("run_manifest")
+        or bundle.get("reproduction") != observation_set.get("reproduction")
+    ):
+        raise EvidenceValidationError("bundle benchmark artifact graph is inconsistent")
+    if "resource_telemetry" in results and results["resource_telemetry"] != bundle.get(
+        "resource_telemetry"
+    ):
+        raise EvidenceValidationError("bundle benchmark resource identities are inconsistent")
+    if not strict_aggregate:
+        return
+
+    comparator_registry = None
+    if comparator_declared:
+        if len(comparator_artifacts) != 1:
+            raise EvidenceValidationError(
+                "bound aggregate requires exactly one comparator registry artifact"
+            )
+        comparator_descriptor, comparator_registry = comparator_artifacts[0]
+        if comparator_descriptor.get("canonical_sha256") != manifest.get(
+            "comparator_registry_sha256"
+        ):
+            raise EvidenceValidationError("bound comparator registry identity is inconsistent")
+    elif comparator_artifacts:
+        raise EvidenceValidationError("aggregate declares an unused comparator registry artifact")
+
+    try:
+        from .observations import aggregate_observation_set
+    except ImportError:
+        from observations import aggregate_observation_set  # type: ignore
+
+    try:
+        aggregate = aggregate_observation_set(
+            observation_set,
+            sample_registry,
+            bootstrap_replicates=manifest["bootstrap_replicates_count"],
+            bootstrap_seed=manifest["bootstrap_seed_count"],
+            comparator_registry=comparator_registry,
+        )
+    except (ObservationValidationError, ProtocolValidationError, ValueError):
+        raise EvidenceValidationError("bound aggregate could not be reproduced") from None
+    expected_results = dict(aggregate)
+    expected_results["score_tables"] = {
+        name: {"sha256": table["sha256"], "records": len(table["records"])}
+        for name, table in aggregate["score_tables"].items()
+    }
+    expected_results["aggregate_sha256"] = results_identity(expected_results)
+    if expected_results != results:
+        raise EvidenceValidationError("bundle results do not reproduce from observations")
+
+    result_coverage = results["coverage"]
+    bundle_coverage = bundle.get("protocol_coverage")
+    if type(result_coverage) is not dict or type(bundle_coverage) is not dict:
+        raise EvidenceValidationError("bound aggregate coverage is incomplete")
+    expected_bundle_coverage = dict(result_coverage)
+    expected_bundle_coverage["artifact_handling"] = {
+        "state": "complete",
+        "reason": "source_artifacts_bound_by_digest",
+    }
+    if bundle_coverage != expected_bundle_coverage:
+        raise EvidenceValidationError("bundle coverage does not match reproduced results")
 
 
 def validate_bundle(
@@ -1525,13 +2050,21 @@ def validate_bundle(
         raise EvidenceValidationError("manifest and results must be objects")
     _validate_public_manifest(bundle["manifest"])
     _validate_public_results(bundle["results"])
+    _validate_bundle_artifact_graph(bundle)
     if verify_artifacts:
-        _validate_artifacts(artifact_entries, artifact_root or Path.cwd())
+        validated_artifacts = _validate_artifacts(artifact_entries, artifact_root or Path.cwd())
+        _validate_bundle_artifact_graph(bundle, validated_artifacts)
     return {
         "valid": True,
         "bundle_id": bundle_id,
         "purpose": purpose,
         "protocol_complete": bundle["claim_eligibility"]["protocol_complete"],
+        "aggregate_verified": bool(
+            verify_artifacts
+            and isinstance(bundle.get("manifest"), Mapping)
+            and bundle["manifest"].get("aggregation_contract_version")
+            == _AGGREGATION_CONTRACT_VERSION
+        ),
         "artifact_count": len(bundle["artifacts"]),
     }
 
@@ -1543,10 +2076,10 @@ def read_bundle(path: Path, *, verify_artifacts: bool = True) -> dict[str, Any]:
             MAX_BUNDLE_BYTES,
             "evidence bundle is not a bounded regular file",
         )
-        value = json.loads(data.decode("utf-8"))
+        value = strict_json_loads(data)
     except EvidenceValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise EvidenceValidationError("evidence bundle is not readable bounded JSON") from None
     if not isinstance(value, dict):
         raise EvidenceValidationError("evidence bundle must contain one JSON object")
@@ -1555,16 +2088,18 @@ def read_bundle(path: Path, *, verify_artifacts: bool = True) -> dict[str, Any]:
 
 
 def write_bundle(path: Path, bundle: Mapping[str, Any]) -> None:
+    validate_bundle(bundle, artifact_root=path.parent, verify_artifacts=True)
     if path.exists() or path.is_symlink():
         raise EvidenceValidationError("evidence bundle exists; refusing to overwrite")
-    validate_bundle(bundle, artifact_root=path.parent, verify_artifacts=True)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         raise EvidenceValidationError("evidence bundle directory could not be created") from None
     temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    created = False
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        created = True
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(
                 json.dumps(json_safe(bundle), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -1582,10 +2117,11 @@ def write_bundle(path: Path, bundle: Mapping[str, Any]) -> None:
     except OSError:
         raise EvidenceValidationError("evidence bundle could not be written atomically") from None
     finally:
-        try:
-            temporary.unlink()
-        except OSError:
-            pass
+        if created:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
 def create_replication_record(
@@ -1626,6 +2162,7 @@ def create_replication_record(
             "artifact_sha256": attestation_sha256,
         },
     }
+    _require_public_values(record)
     record["record_id"] = replication_identity(record)
     validate_replication_record(record)
     return record
@@ -1664,6 +2201,7 @@ def validate_replication_record(
         raise EvidenceValidationError("unsupported replication schema")
     if _contains_forbidden_fields(record):
         raise EvidenceValidationError("replication record contains credential fields")
+    _require_public_values(record)
     for field in (
         "record_id",
         "source_bundle_id",
@@ -1977,10 +2515,10 @@ def _load_replication(path: Path) -> dict[str, Any]:
             MAX_BUNDLE_BYTES,
             "replication record is not a bounded regular file",
         )
-        value = json.loads(data.decode("utf-8"))
+        value = strict_json_loads(data)
     except EvidenceValidationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError, StrictJSONError):
         raise EvidenceValidationError("replication record is not readable bounded JSON") from None
     if not isinstance(value, dict):
         raise EvidenceValidationError("replication record must contain one object")
@@ -2023,14 +2561,38 @@ def main() -> None:
     )
     assemble.add_argument("--sample-registry", type=Path, required=True)
     assemble.add_argument("--observations", type=Path, required=True)
+    assemble.add_argument("--comparator-registry", type=Path)
     assemble.add_argument("--output", type=Path, required=True)
     assemble.add_argument(
         "--purpose",
         choices=("exploratory", "frozen_evaluation"),
         default="exploratory",
     )
-    assemble.add_argument("--bootstrap-replicates", type=int, default=500)
-    assemble.add_argument("--bootstrap-seed", type=int, default=0)
+    assemble.add_argument("--bootstrap-replicates", type=int)
+    assemble.add_argument("--bootstrap-seed", type=int)
+    run = commands.add_parser(
+        "run",
+        help="execute a frozen adapter matrix and assemble content-free evidence",
+    )
+    run.add_argument(
+        "--protocol-manifest",
+        type=Path,
+        default=Path(__file__).with_name("protocols") / "kgw-v1.json",
+    )
+    run.add_argument(
+        "--comparator-registry",
+        type=Path,
+        default=Path(__file__).with_name("comparator-registry-v1.json"),
+    )
+    run.add_argument("--run-config", type=Path, required=True)
+    run.add_argument("--input-corpus", type=Path, required=True)
+    run.add_argument("--output-directory", type=Path, required=True)
+    run.add_argument("--checkpoint", type=Path)
+    run.add_argument("--resume", action="store_true")
+    run.add_argument("--allow-network", action="store_true")
+    run.add_argument("--allow-model-download", action="store_true")
+    run.add_argument("--bootstrap-replicates", type=int, default=500)
+    run.add_argument("--bootstrap-seed", type=int, default=0)
     args = parser.parse_args()
     try:
         if args.command == "verify":
@@ -2064,11 +2626,35 @@ def main() -> None:
                 source_bundle=source,
                 reproduced_bundle=reproduced,
             )
+        elif args.command == "run":
+            try:
+                from .benchmark_run import run_benchmark
+            except ImportError:
+                from benchmark_run import run_benchmark  # type: ignore
+
+            result = run_benchmark(
+                protocol_manifest_path=args.protocol_manifest,
+                comparator_registry_path=args.comparator_registry,
+                run_config_path=args.run_config,
+                input_corpus_path=args.input_corpus,
+                output_directory=args.output_directory,
+                checkpoint_path=args.checkpoint,
+                resume=args.resume,
+                allow_network=args.allow_network,
+                allow_model_download=args.allow_model_download,
+                bootstrap_replicates=args.bootstrap_replicates,
+                bootstrap_seed=args.bootstrap_seed,
+            )
         else:
             try:
+                from .comparisons import comparator_registry_sha256, load_comparator_registry
                 from .observations import aggregate_observation_set, read_observation_set
                 from .protocol import load_sample_registry
             except ImportError:
+                from comparisons import (  # type: ignore
+                    comparator_registry_sha256,
+                    load_comparator_registry,
+                )
                 from observations import (  # type: ignore
                     aggregate_observation_set,
                     read_observation_set,
@@ -2077,11 +2663,64 @@ def main() -> None:
 
             sample_registry, sample_report = load_sample_registry(args.sample_registry)
             observations = read_observation_set(args.observations)
+            manifest = observations.get("run_manifest")
+            if type(manifest) is not dict:
+                raise EvidenceValidationError("observation run manifest is invalid")
+            _validate_public_manifest(manifest)
+            contract_version = manifest.get("aggregation_contract_version")
+            if contract_version not in {None, _AGGREGATION_CONTRACT_VERSION}:
+                raise EvidenceValidationError("observation aggregation contract is unsupported")
+
+            if contract_version == _AGGREGATION_CONTRACT_VERSION:
+                manifest_replicates = manifest.get("bootstrap_replicates_count")
+                manifest_seed = manifest.get("bootstrap_seed_count")
+                if (
+                    type(manifest_replicates) is not int
+                    or not 2 <= manifest_replicates <= 10_000
+                    or type(manifest_seed) is not int
+                    or not 0 <= manifest_seed <= (1 << 63) - 1
+                ):
+                    raise EvidenceValidationError("bound aggregate bootstrap settings are invalid")
+                if (
+                    args.bootstrap_replicates is not None
+                    and args.bootstrap_replicates != manifest_replicates
+                ) or (args.bootstrap_seed is not None and args.bootstrap_seed != manifest_seed):
+                    raise EvidenceValidationError(
+                        "requested bootstrap settings do not match the observation manifest"
+                    )
+                bootstrap_replicates = manifest_replicates
+                bootstrap_seed = manifest_seed
+            else:
+                bootstrap_replicates = (
+                    500 if args.bootstrap_replicates is None else args.bootstrap_replicates
+                )
+                bootstrap_seed = 0 if args.bootstrap_seed is None else args.bootstrap_seed
+
+            declared_comparator_digest = manifest.get("comparator_registry_sha256")
+            comparator_registry = None
+            if contract_version == _AGGREGATION_CONTRACT_VERSION and (
+                (declared_comparator_digest is None) != (args.comparator_registry is None)
+            ):
+                raise EvidenceValidationError(
+                    "bound aggregate comparator declaration and artifact do not match"
+                )
+            if args.comparator_registry is not None:
+                comparator_registry = load_comparator_registry(args.comparator_registry)
+                observed_comparator_digest = comparator_registry_sha256(comparator_registry)
+                if (
+                    declared_comparator_digest is not None
+                    and observed_comparator_digest != declared_comparator_digest
+                ):
+                    raise EvidenceValidationError(
+                        "comparator registry does not match the observation manifest"
+                    )
+
             aggregate = aggregate_observation_set(
                 observations,
                 sample_registry,
-                bootstrap_replicates=args.bootstrap_replicates,
-                bootstrap_seed=args.bootstrap_seed,
+                bootstrap_replicates=bootstrap_replicates,
+                bootstrap_seed=bootstrap_seed,
+                comparator_registry=comparator_registry,
             )
             coverage = dict(aggregate["coverage"])
             coverage["artifact_handling"] = {
@@ -2093,18 +2732,22 @@ def main() -> None:
                 name: {"sha256": table["sha256"], "records": len(table["records"])}
                 for name, table in aggregate["score_tables"].items()
             }
+            public_results["aggregate_sha256"] = results_identity(public_results)
             output_root = args.output.parent.resolve()
+            artifacts = [
+                artifact_descriptor(args.sample_registry, root=output_root),
+                artifact_descriptor(args.observations, root=output_root),
+            ]
+            if args.comparator_registry is not None:
+                artifacts.append(artifact_descriptor(args.comparator_registry, root=output_root))
             bundle = create_bundle(
                 purpose=args.purpose,
-                manifest=observations["run_manifest"],
+                manifest=manifest,
                 protocol_coverage=coverage,
                 results=public_results,
                 resource_telemetry=aggregate["resource_telemetry"],
                 reproduction=observations["reproduction"],
-                artifacts=[
-                    artifact_descriptor(args.sample_registry, root=output_root),
-                    artifact_descriptor(args.observations, root=output_root),
-                ],
+                artifacts=artifacts,
                 sample_registry_sha256=sample_report["sample_registry_sha256"],
                 sample_count=sample_report["sample_count"],
             )
@@ -2114,7 +2757,7 @@ def main() -> None:
                 "bundle_id": bundle["bundle_id"],
                 "protocol_complete": bundle["claim_eligibility"]["protocol_complete"],
             }
-    except (EvidenceValidationError, ProtocolValidationError, OSError, ValueError):
+    except (EvidenceValidationError, ProtocolValidationError, OSError, RuntimeError, ValueError):
         parser.error("evidence validation failed; exception details were redacted")
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/benchmark-comparator-registry-v1.json",
+  "title": "Dewatermark frozen benchmark comparator registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registry_id",
+    "classification",
+    "frozen",
+    "control_condition_id",
+    "analysis",
+    "conditions"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "registry_id": { "$ref": "#/$defs/publicId" },
+    "classification": { "const": "frozen_comparator_preregistration_no_results" },
+    "frozen": { "const": true },
+    "control_condition_id": { "$ref": "#/$defs/publicId" },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "family", "alpha"],
+      "properties": {
+        "method": { "const": "holm_bonferroni_cluster_paired_sign_test" },
+        "family": { "const": "detector_and_fixed_fpr" },
+        "alpha": { "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "adapter_required", "implementation_binding"],
+        "properties": {
+          "id": { "$ref": "#/$defs/publicId" },
+          "role": { "enum": ["negative_control", "system_under_test", "baseline"] },
+          "adapter_required": { "type": "boolean" },
+          "implementation_binding": {
+            "enum": ["intrinsic_identity_transform", "runtime_manifest_sha256_required"]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "publicId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]*$"
+    }
+  }
+}

@@ -11,6 +11,7 @@ import hmac
 import inspect
 import json
 import math
+import re
 import weakref
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -19,6 +20,7 @@ from threading import RLock
 from types import CodeType, FunctionType, MemberDescriptorType
 from typing import Any, Iterable, Iterator, Mapping, Optional
 
+from .command_safety import _unsafe_argument_value
 from .exceptions import ConfigurationError
 from .models import CapabilityManifest
 
@@ -37,6 +39,83 @@ _IDENTITY_DEPTH_LIMIT = 32
 _STATE_FINGERPRINT_KEY = hashlib.sha256(
     b"dewatermark/static-extension-state-fingerprint/v1"
 ).digest()
+_SAFE_SENSITIVE_STATE_NAMES = frozenset(
+    {
+        "key_fingerprint",
+        "key_id",
+        "key_identifier",
+        "key_ids",
+        "public_key_id",
+        "requires_secret",
+        "secret_binding",
+    }
+)
+_SENSITIVE_STATE_NAMES = frozenset(
+    {
+        "api_key",
+        "authorization",
+        "auth_token",
+        "credential",
+        "credentials",
+        "password",
+        "private_key",
+        "refresh_token",
+        "secret",
+        "secret_key",
+        "token_value",
+    }
+)
+_SENSITIVE_STATE_SUFFIXES = (
+    "_api_key",
+    "_auth_token",
+    "_credential",
+    "_credentials",
+    "_password",
+    "_private_key",
+    "_refresh_token",
+    "_secret",
+    "_secret_key",
+    "_token_value",
+)
+_PRIVATE_STATE_PATH = re.compile(
+    r"^(?:/(?:Users|home|root|private|tmp|var)/|~[/\\]|[A-Za-z]:[/\\])"
+)
+_PRIVATE_STATE_PATH_NAMES = frozenset(
+    {"directory", "file", "filename", "model_path", "path", "source_path"}
+)
+
+
+def _credential_state_name(name: Any) -> bool:
+    if type(name) is not str:
+        return False
+    normalized = name.lower().replace("-", "_")
+    if normalized in _SAFE_SENSITIVE_STATE_NAMES:
+        return False
+    return normalized in _SENSITIVE_STATE_NAMES or normalized.endswith(_SENSITIVE_STATE_SUFFIXES)
+
+
+def _reject_private_identity_state(*, name: Any = None, value: Any = None) -> None:
+    """Keep credentials and guessable private paths out of public digests."""
+    normalized_name = name.lower().replace("-", "_") if type(name) is str else ""
+    path_named = normalized_name in _PRIVATE_STATE_PATH_NAMES or normalized_name.endswith(
+        ("_directory", "_file", "_filename", "_path")
+    )
+    if _credential_state_name(name) or (
+        type(value) is str
+        and (
+            _unsafe_argument_value(value)
+            or (
+                path_named
+                and (
+                    _PRIVATE_STATE_PATH.match(value.strip())
+                    or (len(value.strip()) > 2 and value.strip().startswith("\\\\"))
+                )
+            )
+        )
+    ):
+        raise ConfigurationError(
+            "extension identity cannot include private state; use an operator-managed channel"
+        )
 
 
 class _ReviewedExtensions:
@@ -146,9 +225,13 @@ def enforce_consent(capability: CapabilityManifest, config: Any | None) -> None:
         raise PermissionError(f"{capability.kind} requires explicit remote-processing consent")
     if capability.model_download_possible and not allow_download:
         raise PermissionError(f"{capability.kind} requires explicit model-download consent")
-    if capability.requires_secret:
+    if capability.requires_secret and not (
+        capability.kind == "detector"
+        and capability.metadata.get("secret_binding") == "operator_managed_file"
+    ):
         # The generic extension boundary deliberately receives no credential
-        # resolver. Purpose-built adapters must implement a scoped secret channel.
+        # resolver. A detector may instead declare the purpose-built, operator-
+        # managed file binding whose command adapter validates the private file.
         raise PermissionError(
             f"{capability.kind} requires a secret, but no scoped extension secret was configured"
         )
@@ -326,22 +409,44 @@ def _function_state(
     depth: int,
 ) -> None:
     _code_digest(function.__code__, digest)
+    positional_names = function.__code__.co_varnames[: function.__code__.co_argcount]
+    positional_defaults = function.__defaults__ or ()
+    if positional_defaults:
+        for name, value in zip(positional_names[-len(positional_defaults) :], positional_defaults):
+            _reject_private_identity_state(name=name, value=value)
+    for name, value in (function.__kwdefaults__ or {}).items():
+        _reject_private_identity_state(name=name, value=value)
     _state_digest(function.__defaults__, digest, seen, budget, depth + 1)
     _state_digest(function.__kwdefaults__, digest, seen, budget, depth + 1)
     closure = function.__closure__
     if closure is not None:
-        for cell in closure:
+        for name, cell in zip(function.__code__.co_freevars, closure):
             try:
                 value = cell.cell_contents
             except ValueError:
                 _digest_scalar(digest, b"empty-cell")
             else:
+                _reject_private_identity_state(name=name, value=value)
                 _state_digest(value, digest, seen, budget, depth + 1)
     globals_dict = function.__globals__
     for name in sorted(set(function.__code__.co_names)):
         if name in globals_dict and name != "__builtins__":
+            _reject_private_identity_state(name=name, value=globals_dict[name])
             _digest_scalar(digest, b"global-name", name.encode("utf-8", "replace"))
             _state_digest(globals_dict[name], digest, seen, budget, depth + 1)
+
+
+def _function_implementation_digest(function: FunctionType, digest: Any) -> None:
+    """Bind code and immutable call defaults without runtime-observation state."""
+    _code_digest(function.__code__, digest)
+    defaults = function.__defaults__ or ()
+    digest.update(len(defaults).to_bytes(2, "big"))
+    for value in defaults:
+        _code_constant_digest(value, digest)
+    kwdefaults = function.__kwdefaults__ or {}
+    for name in sorted(kwdefaults):
+        digest.update(name.encode("utf-8", "replace"))
+        _code_constant_digest(kwdefaults[name], digest)
 
 
 def _class_state(
@@ -370,6 +475,8 @@ def _class_state(
             value = namespace[name]
             if type(value) in (staticmethod, classmethod):
                 value = value.__func__
+            if not isinstance(value, (FunctionType, property, type)):
+                _reject_private_identity_state(name=name, value=value)
             _state_digest(value, digest, seen, budget, depth + 1)
 
 
@@ -404,6 +511,7 @@ def _instance_state(
             except (AttributeError, TypeError):
                 _digest_scalar(digest, b"empty-slot")
             else:
+                _reject_private_identity_state(name=name, value=value)
                 _state_digest(value, digest, seen, budget, depth + 1)
 
 
@@ -425,6 +533,7 @@ def _state_digest(
         _digest_scalar(digest, b"none")
         return
     if value_type is str:
+        _reject_private_identity_state(value=value)
         _digest_scalar(digest, b"string", value.encode("utf-8", "replace"))
         return
     if value_type is bytes:
@@ -464,6 +573,7 @@ def _state_digest(
         if value_type is dict:
             entries: list[tuple[bytes, Any]] = []
             for key, item in value.items():
+                _reject_private_identity_state(name=key, value=item)
                 key_digest = hashlib.sha256()
                 _state_digest(key, key_digest, seen, budget, depth + 1)
                 entries.append((key_digest.digest(), item))
@@ -533,24 +643,44 @@ def _state_digest(
 def implementation_sha256(target: Any, *, instance_sensitive: bool = False) -> str:
     """Return a content-free implementation identity suitable for receipts."""
     digest = hashlib.sha256()
-    kind = target if isinstance(target, type) else type(target)
-    namespace = type.__getattribute__(kind, "__dict__")
-    module = _literal_name(namespace.get("__module__", ""))
-    qualname = _literal_name(namespace.get("__qualname__", ""))
     if isinstance(target, FunctionType):
-        module = target.__module__
-        qualname = target.__qualname__
-    digest.update(module.encode("utf-8", "replace"))
-    digest.update(qualname.encode("utf-8", "replace"))
-    for name in sorted(namespace):
-        value = namespace[name]
-        if type(value) in (staticmethod, classmethod):
-            value = value.__func__
-        if isinstance(value, FunctionType):
-            digest.update(name.encode("utf-8", "replace"))
-            _code_digest(value.__code__, digest)
-    if isinstance(target, FunctionType):
-        _code_digest(target.__code__, digest)
+        digest.update(b"function-effective-v2")
+        _function_implementation_digest(target, digest)
+    else:
+        # Bind effective behavior across the MRO, not the cosmetic module/name
+        # of an empty subclass. The first definition wins exactly as Python
+        # method lookup does. Conservatively treating byte-identical effective
+        # methods as one implementation prevents wrapper subclasses from
+        # manufacturing held-out independence.
+        digest.update(b"class-effective-methods-v2")
+        kind = target if isinstance(target, type) else type(target)
+        seen_names: set[str] = set()
+        lineage = type.__getattribute__(kind, "__mro__")
+        for base in lineage:
+            if base is object:
+                continue
+            namespace = type.__getattribute__(base, "__dict__")
+            for name in sorted(namespace):
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
+                value = namespace[name]
+                if type(value) in (staticmethod, classmethod):
+                    value = value.__func__
+                functions: tuple[FunctionType, ...]
+                if isinstance(value, FunctionType):
+                    functions = (value,)
+                elif type(value) is property:
+                    functions = tuple(
+                        function
+                        for function in (value.fget, value.fset, value.fdel)
+                        if isinstance(function, FunctionType)
+                    )
+                else:
+                    continue
+                digest.update(name.encode("utf-8", "replace"))
+                for function in functions:
+                    _function_implementation_digest(function, digest)
     if instance_sensitive and not isinstance(target, type):
         digest.update(f"instance:{_identity_token(target)}".encode("ascii"))
     return digest.hexdigest()

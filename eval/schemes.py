@@ -86,8 +86,15 @@ def _configuration_sha256(value: dict) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _key_fingerprint(value: int) -> str:
-    return hashlib.sha256(str(value).encode()).hexdigest()[:16]
+# Public partition labels are independent random values, not hashes of the small
+# integer reference keys. Publishing a key-derived digest would give an offline
+# oracle for guessing those keys. These fixed CSPRNG-generated IDs identify the
+# bundled fixture configurations without revealing anything about key material.
+_OPAQUE_KEY_IDS = {
+    "KGW": "4a8161a4fe3ec7f1b01b4751d52fcdfbb23a1791494c0f532bc40bfe57669fe7",
+    "Unigram": "bece4875328daed16f9fb07d2fb287f44382cc6e2b3b3ff8797a208da0228220",
+    "EXP": "eadb1902b9c377239dc78b5c4fcf3d9dedfc22ca8d9993e5eda3e5d010fb59ed",
+}
 
 
 def _set_strength(name):
@@ -267,7 +274,8 @@ SCHEMES = {
             "vendor_validated": False,
             "score_direction": "higher",
             "minimum_tokens": 2,
-            "key_fingerprint": _key_fingerprint(kgw.HASH_KEY),
+            # Legacy field name; the value is a random non-secret public ID.
+            "key_fingerprint": _OPAQUE_KEY_IDS["KGW"],
             "configuration_sha256": _configuration_sha256(
                 {"gamma": GAMMA, "context_width": 1, "duplicate_bigrams": "ignored"}
             ),
@@ -293,7 +301,8 @@ SCHEMES = {
             "vendor_validated": False,
             "score_direction": "higher",
             "minimum_tokens": 1,
-            "key_fingerprint": _key_fingerprint(UNIGRAM_KEY),
+            # Legacy field name; the value is a random non-secret public ID.
+            "key_fingerprint": _OPAQUE_KEY_IDS["Unigram"],
             "configuration_sha256": _configuration_sha256({"gamma": GAMMA}),
             "calibration": {"method": "held_out_empirical_null", "threshold_operator": ">"},
         },
@@ -316,7 +325,8 @@ SCHEMES = {
             "vendor_validated": False,
             "score_direction": "higher",
             "minimum_tokens": 2,
-            "key_fingerprint": _key_fingerprint(EXP_KEY),
+            # Legacy field name; the value is a random non-secret public ID.
+            "key_fingerprint": _OPAQUE_KEY_IDS["EXP"],
             "configuration_sha256": _configuration_sha256(
                 {"context_width": 1, "decoding": EXP_DECODING}
             ),

@@ -183,14 +183,42 @@ def test_registry_rejects_raw_text_and_cross_split_cluster_leakage():
         validate_sample_registry(value)
 
 
-def test_registry_requires_digest_key_fingerprints():
+def test_registry_requires_256_bit_encoded_opaque_key_ids():
     value = _complete_registry()
     raw_key = "looks-public-but-could-be-a-secret"
     value["key_partitions"][0]["key_fingerprint"] = raw_key
     value["samples"][0]["key_fingerprint"] = raw_key
     value["samples"][1]["key_fingerprint"] = raw_key
-    with pytest.raises(ProtocolValidationError, match="lowercase SHA-256"):
+    with pytest.raises(ProtocolValidationError, match="64 lowercase hexadecimal"):
         validate_sample_registry(value)
+
+
+def test_legacy_generated_key_gaps_downgrade_held_out_key_coverage():
+    value = _complete_registry()
+    value["samples"][0]["key_fingerprint"] = None
+    report = validate_sample_registry(value)
+    assert report["coverage"]["held_out_keys"]["state"] == "partial"
+    assert report["registry_complete"] is False
+
+    value = _complete_registry()
+    second_calibration_key = _digest("key-cal-second")
+    value["key_partitions"].append(
+        {"key_fingerprint": second_calibration_key, "split": "calibration"}
+    )
+    matched = next(item for item in value["samples"] if item["cohort"] == "matched_generator_null")
+    matched["key_fingerprint"] = second_calibration_key
+    report = validate_sample_registry(value)
+    assert report["coverage"]["held_out_keys"]["state"] == "partial"
+    assert report["registry_complete"] is False
+
+
+def test_registry_rejects_credential_shaped_public_values():
+    value = _complete_registry()
+    secret = "sk-live-PRIVATECLUSTERIDENTIFIER123456789"
+    value["samples"][0]["cluster_id"] = secret
+    with pytest.raises(ProtocolValidationError, match="private or credential-like") as captured:
+        validate_sample_registry(value)
+    assert secret not in str(captured.value)
 
 
 def test_registry_rejects_hook_bearing_mapping_without_reflecting_it():
@@ -273,6 +301,32 @@ def test_human_inputs_are_hashed_and_text_is_separate_by_explicit_opt_in():
         include_runtime_text=True,
     )
     assert texts == [control["text"]]
+
+
+def test_human_control_helper_rejects_credential_shaped_public_metadata():
+    control = {
+        "id": "sk-live-PRIVATEHUMANCONTROL123456789",
+        "cluster_id": "human-cluster-1",
+        "text": "This local text is never published.",
+        "task": "open_ended_prose",
+        "language": "en",
+        "domain": "fixture",
+        "license_id": "CC0-1.0",
+        "source_date": "2025-01-02",
+        "effective_detector_tokens": 32,
+        "task_checkers": ["semantic", "factual", "protected_span"],
+        "contamination_risk": "not_assessed_synthetic_fixture",
+        "memorization_risk": "not_assessed_synthetic_fixture",
+    }
+    secret = control["id"]
+    with pytest.raises(ProtocolValidationError, match="private or credential-like") as captured:
+        human_control_records(
+            [control],
+            split="final_test",
+            selection_rule_sha256=_digest("selection"),
+            matching_rule_sha256=_digest("matching"),
+        )
+    assert secret not in str(captured.value)
 
 
 def test_required_length_sweep_touches_all_bins_without_zero_length():

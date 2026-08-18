@@ -98,6 +98,8 @@ _SENSITIVE_VALUE_MARKER = re.compile(
     r"(?i)(?<![A-Za-z0-9])(?:api[-_]?key|bearer|credential|password|private|secret|token)"
     r"(?![A-Za-z0-9])"
 )
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_DECISION_OPERATORS = frozenset({">", ">=", "<", "<="})
 
 
 def _private_metadata_key(key: str) -> bool:
@@ -197,6 +199,16 @@ def _public_number(value: Any) -> Optional[float | int]:
     if type(value) in (int, float) and math.isfinite(float(value)):
         return value
     return None
+
+
+def _threshold_decision(score: float | int, threshold: float | int, operator: str) -> bool:
+    if operator == ">":
+        return score > threshold
+    if operator == ">=":
+        return score >= threshold
+    if operator == "<":
+        return score < threshold
+    return score <= threshold
 
 
 @dataclass(frozen=True, repr=False)
@@ -312,6 +324,63 @@ class VerificationEvidence(_RedactedRepr, Mapping[str, Any]):
     after: Optional[DetectionEvidence] = None
     reason: Optional[str] = None
     schema_version: str = SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SCHEMA_VERSION:
+            raise ValueError("verification evidence has an invalid schema version")
+        if self.status not in {"verified_cleared", "residual", "not_verifiable", "failed"}:
+            raise ValueError("verification evidence has an invalid status")
+        if self.status != "verified_cleared":
+            return
+        if (
+            type(self.detector) is not str
+            or not self.detector
+            or type(self.before) is not DetectionEvidence
+            or type(self.after) is not DetectionEvidence
+            or type(self.before.detector) is not str
+            or type(self.after.detector) is not str
+            or type(self.before.scheme) is not str
+            or not self.before.scheme
+            or type(self.after.scheme) is not str
+            or self.before.detector != self.detector
+            or self.after.detector != self.detector
+            or self.before.status != "detected"
+            or self.after.status != "not_detected"
+            or self.before.scheme != self.after.scheme
+            or type(self.before.details) is not dict
+            or type(self.after.details) is not dict
+            or self.reason is not None
+        ):
+            raise ValueError("verified clearance requires complete paired detector evidence")
+        configuration = self.before.details.get("configuration_sha256")
+        direction = self.before.details.get("score_direction")
+        operator = self.before.details.get("threshold_operator")
+        before_score = _public_number(self.before.score)
+        after_score = _public_number(self.after.score)
+        threshold = _public_number(self.before.threshold)
+        after_threshold = _public_number(self.after.threshold)
+        if (
+            type(configuration) is not str
+            or _SHA256.fullmatch(configuration) is None
+            or type(direction) is not str
+            or direction not in {"higher", "lower"}
+            or type(operator) is not str
+            or operator not in _DECISION_OPERATORS
+            or before_score is None
+            or after_score is None
+            or threshold is None
+            or after_threshold is None
+            or float(threshold) != float(after_threshold)
+            or (operator in {">", ">="}) != (direction == "higher")
+            or self.after.details.get("configuration_sha256") != configuration
+            or self.after.details.get("score_direction") != direction
+            or self.after.details.get("threshold_operator") != operator
+        ):
+            raise ValueError("verified clearance requires one bound detector decision contract")
+        before_positive = _threshold_decision(before_score, threshold, operator)
+        after_positive = _threshold_decision(after_score, threshold, operator)
+        if not before_positive or after_positive:
+            raise ValueError("verified clearance contradicts its detector threshold")
 
     def to_dict(self) -> dict[str, Any]:
         value = {

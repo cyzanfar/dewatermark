@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 [project]
 name = "dewatermark"
 dynamic = ["version"]
-description = "AI text watermark remover for Unicode artifacts, with detector-backed evaluation of statistical LLM watermarks."
+description = "Verification-first AI text watermark remover for Unicode artifacts and detector-scoped statistical watermark mitigation."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE", "UNICODE_LICENSE.txt"]
 authors = [{ name = "Cyrus Anfar" }]
-keywords = ["text watermark remover", "AI watermark remover", "LLM watermark", "steganography", "unicode", "SynthID", "AI agents"]
+keywords = ["text watermark remover", "AI watermark remover", "LLM watermark", "watermark detector", "statistical watermark", "steganography", "unicode", "SynthID", "AI agents"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -81,7 +81,8 @@ exclude = [
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/dewatermark", "eval/*.py", "eval/*.json", "eval/README.md",
+    "src/dewatermark", "eval/*.py", "eval/*.json", "eval/protocols", "eval/README.md",
+    "eval/PROTOCOL_RUN.md", "eval/requirements.txt",
     "README.md", "LICENSE", "UNICODE_LICENSE.txt", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md",
     "CODE_OF_CONDUCT.md", "AGENTS.md", "docs", "examples", "schemas", "skills", "tests",
     "adapters",

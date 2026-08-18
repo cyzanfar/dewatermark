@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "mismatches": [],
+      "name": "natural-reference-positive",
+      "passed": true
+    },
+    {
+      "mismatches": [],
+      "name": "natural-length-control",
+      "passed": true
+    },
+    {
+      "mismatches": [],
+      "name": "readable-positive-variant",
+      "passed": true
+    },
+    {
+      "mismatches": [],
+      "name": "natural-short-abstention",
+      "passed": true
+    }
+  ],
+  "configuration_sha256": "3e6f300fb62b7d7dc7c52755a35fca156a67ccfd41f36176d9c6d13c4181e646",
+  "independent_scorer": "natural_adapter.py fixed-mask scorer",
+  "numeric_absolute_tolerance": 1e-15,
+  "numeric_relative_tolerance": 1e-12,
+  "p_value_log_absolute_tolerance": 1e-10,
+  "passed": true,
+  "protocol_version": "1.1",
+  "upstream_implementation": "https://github.com/XuandongZhao/Unigram-Watermark@b96cdb4d52771e3cbd543a9d9aeeaec8d0790ca2",
+  "vectors_sha256": "7b8f12c548bf987b96b615e8e98a348fb3dcdf5b9aac2dc58b701b36849fb8f9"
+}

@@ -1,0 +1,12 @@
+{
+  "alpha": 0.01,
+  "claim_limit": "analytical dynamic threshold; no empirical false-positive claim",
+  "empirical_calibration": false,
+  "finite_population_factor": "sqrt(1 - (m - 1) / (N - 1))",
+  "minimum_unique_tokens": 32,
+  "null_approximation": "one-sided standard-normal survival after finite-population correction",
+  "schema_version": "1.0",
+  "score": "finite_population_adjusted_z_score",
+  "threshold": 2.3263478740408408,
+  "threshold_operator": ">"
+}

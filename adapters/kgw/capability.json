@@ -6,18 +6,19 @@
   "kind": "detector",
   "metadata": {
     "calibration": "not_calibrated",
-    "command_protocol_version": "1.0",
-    "configuration_sha256": "b773074d85f03ebd9172fb940b0bcd821e7a796575082eb5a896e5f0bd0c0dbe",
+    "command_protocol_version": "1.1",
+    "configuration_sha256": "db441c4d22f42cb69ea57377660f2eacb20a0c0788084b7864acc3a78ec9d8ec",
     "golden_conformance": {
       "passed": true,
       "recorded_device": "cpu",
       "recorded_torch_version": "2.4.1",
-      "report_sha256": "5c81adf085e7ee62b3ed44cac29355badfaee241bc5fb8fac1076b91c94cc122",
+      "report_sha256": "2326a98510aec11061157169707072a477bf644425c9b4defc64e4d70f1bd558",
       "vectors_sha256": "73b691651a04066062b5fc6a67c0c8d17f5cde13a7185d650b11d1088f645ee1"
     },
     "minimum_effective_tokens": 32,
     "production_detection": false,
     "score_direction": "higher",
+    "threshold_operator": ">",
     "source": "https://github.com/jwkirchenbauer/lm-watermarking",
     "source_file_sha256": "512c40644bc9e9932a8674bbf13046c1a4e92db429cff92afc9e90d2226896fc",
     "source_revision": "82922516930c02f8aa322765defdb5863d07a00e",

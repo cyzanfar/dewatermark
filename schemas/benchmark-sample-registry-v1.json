@@ -21,12 +21,13 @@
     "freeze_record_sha256": { "$ref": "#/$defs/sha256" },
     "key_partitions": {
       "type": "array",
+      "description": "Public key partitions. Existing v1 artifacts may contain legacy key fingerprints. New 0.7 producers retain the field name but use independent CSPRNG-generated, non-secret opaque IDs that are never derived from key material or a private slot.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["key_fingerprint", "split"],
         "properties": {
-          "key_fingerprint": { "$ref": "#/$defs/sha256" },
+          "key_fingerprint": { "$ref": "#/$defs/opaqueKeyId" },
           "split": { "$ref": "#/$defs/split" }
         }
       }
@@ -39,6 +40,11 @@
   "additionalProperties": false,
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "opaqueKeyId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "A 64-hex public partition value. Existing v1 artifacts may contain a legacy fingerprint; new 0.7 artifacts use an independent CSPRNG-generated non-secret ID."
+    },
     "publicId": {
       "type": "string",
       "minLength": 1,
@@ -101,7 +107,8 @@
         "effective_detector_tokens": { "type": "integer", "minimum": 0 },
         "length_bin": { "enum": ["lt64", "64_127", "128_255", "256_511", "512_plus"] },
         "key_fingerprint": {
-          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+          "description": "Existing v1 artifacts may carry a legacy fingerprint. New 0.7 generated samples carry the matching non-secret opaqueKeyId in this retained field.",
+          "oneOf": [{ "$ref": "#/$defs/opaqueKeyId" }, { "type": "null" }]
         },
         "task_checkers": {
           "type": "array",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Optional
 
 from .config import DewatermarkConfig, resolve
@@ -21,6 +22,23 @@ from .request_context import (
     current_request_context,
     request_scope,
 )
+
+
+def _finite_number(value: Any) -> Optional[float]:
+    if type(value) not in (int, float):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _threshold_decision(score: float, threshold: float, operator: str) -> bool:
+    if operator == ">":
+        return score > threshold
+    if operator == ">=":
+        return score >= threshold
+    if operator == "<":
+        return score < threshold
+    return score <= threshold
 
 
 def resolve_detector(
@@ -120,7 +138,83 @@ def evaluate_verification(
 ) -> VerificationEvidence:
     """Conclude only what paired evidence from a declared detector supports."""
     capability = capability_of(detector, detector_name or before.detector)
-    name = detector_name or capability.identifier
+    name = capability.identifier
+    before_configuration = before.details.get("configuration_sha256")
+    before_direction = before.details.get("score_direction")
+    before_operator = before.details.get("threshold_operator")
+    declared_configuration = capability.metadata.get("configuration_sha256")
+    declared_direction = capability.metadata.get("score_direction")
+    declared_operator = capability.metadata.get("threshold_operator")
+    declared_threshold = capability.metadata.get("threshold")
+    declared_threshold_number = _finite_number(declared_threshold)
+    from .command_detector import CommandDetector
+
+    command_contract_bound = not isinstance(detector, CommandDetector) or (
+        type(detector) is CommandDetector and detector._contract.threshold_operator_explicit
+    )
+    before_score = _finite_number(before.score)
+    after_score = _finite_number(after.score)
+    threshold = _finite_number(before.threshold)
+    after_threshold = _finite_number(after.threshold)
+    decision_positive: Optional[tuple[bool, bool]] = None
+    if (
+        before_score is not None
+        and after_score is not None
+        and threshold is not None
+        and type(before_operator) is str
+        and before_operator in {">", ">=", "<", "<="}
+    ):
+        decision_positive = (
+            _threshold_decision(before_score, threshold, before_operator),
+            _threshold_decision(after_score, threshold, before_operator),
+        )
+
+    paired_contract_matches = (
+        command_contract_bound
+        and before.detector == after.detector == capability.identifier
+        and bool(capability.schemes)
+        and type(before.scheme) is str
+        and bool(before.scheme)
+        and type(after.scheme) is str
+        and before.scheme == after.scheme
+        and before.scheme in capability.schemes
+        and threshold is not None
+        and after_threshold is not None
+        and threshold == after_threshold
+        and type(before_configuration) is str
+        and len(before_configuration) == 64
+        and all(character in "0123456789abcdef" for character in before_configuration)
+        and type(before_direction) is str
+        and before_direction in {"higher", "lower"}
+        and type(before_operator) is str
+        and before_operator in {">", ">=", "<", "<="}
+        and (before_operator in {">", ">="}) == (before_direction == "higher")
+        and decision_positive
+        == (
+            before.status == "detected",
+            after.status == "detected",
+        )
+        and type(declared_configuration) is str
+        and len(declared_configuration) == 64
+        and all(character in "0123456789abcdef" for character in declared_configuration)
+        and before_configuration == declared_configuration
+        and type(declared_direction) is str
+        and declared_direction in {"higher", "lower"}
+        and before_direction == declared_direction
+        and type(declared_operator) is str
+        and declared_operator in {">", ">=", "<", "<="}
+        and before_operator == declared_operator
+        and declared_threshold_number is not None
+        and threshold == declared_threshold_number
+        and all(
+            before.details.get(field) == after.details.get(field)
+            for field in (
+                "configuration_sha256",
+                "score_direction",
+                "threshold_operator",
+            )
+        )
+    )
     reserved_unicode_collision = (
         capability.identifier == "unicode-artifacts-v1"
         and type(detector) is not UnicodeArtifactDetector
@@ -132,11 +226,18 @@ def evaluate_verification(
         and "unicode-artifacts" in capability.schemes
         and capability.metadata.get("verification_basis") == "literal_codepoint_policy"
     )
-    if before.status == "detected" and after.status == "not_detected":
+    status: VerificationStatus
+    if before.status == "detector_error" or after.status == "detector_error":
+        status = "failed"
+        reason = "the named detector failed"
+    elif not paired_contract_matches:
+        status = "not_verifiable"
+        reason = "paired detector evidence uses incompatible decision contracts"
+    elif before.status == "detected" and after.status == "not_detected":
         if deterministic_unicode_policy or (
             capability.calibrated and capability.independent and not reserved_unicode_collision
         ):
-            status: VerificationStatus = "verified_cleared"
+            status = "verified_cleared"
             reason = None
         else:
             status = "not_verifiable"
@@ -148,9 +249,6 @@ def evaluate_verification(
     elif after.status == "detected":
         status = "residual"
         reason = "the named detector still reports evidence"
-    elif before.status == "detector_error" or after.status == "detector_error":
-        status = "failed"
-        reason = "the named detector failed"
     else:
         status = "not_verifiable"
         reason = "verification requires compatible positive evidence before and none after"

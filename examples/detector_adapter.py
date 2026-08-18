@@ -21,6 +21,7 @@ file only when detection is explicitly requested::
         schemes=("demo-marker",),
         configuration_sha256=detector_configuration_sha256(public_config),
         threshold=1.0,
+        threshold_operator=">=",
         calibrated=False,
         independent=False,
     )
@@ -39,7 +40,7 @@ import math
 import sys
 from typing import Any, Mapping
 
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.1"
 DETECTOR = "demo-command-detector"
 SCHEME = "demo-marker"
 MARKER = "[demo-watermark]"
@@ -67,6 +68,7 @@ def _safe_failure(reason_code: str) -> dict[str, Any]:
         "score": None,
         "threshold": THRESHOLD,
         "score_direction": "higher",
+        "threshold_operator": ">=",
         "effective_tokens": 0,
         "configuration_sha256": CONFIGURATION_SHA256,
         "reason_code": reason_code,
@@ -96,6 +98,7 @@ def handle(request: Mapping[str, Any]) -> dict[str, Any]:
         "score": score,
         "threshold": THRESHOLD,
         "score_direction": "higher",
+        "threshold_operator": ">=",
         "effective_tokens": len(text.split()),
         "configuration_sha256": CONFIGURATION_SHA256,
     }

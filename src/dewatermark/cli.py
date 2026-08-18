@@ -21,13 +21,16 @@ from .assurance_api import (
     verify_text,
 )
 from .config import DewatermarkConfig
+from .detector_session import DetectorSession
 from .detector_tools import (
     conform_reference_detectors,
     discover_detector_capabilities,
     doctor_detectors,
 )
 from .exceptions import DewatermarkError
+from .localization import localize
 from .models import SCHEMA_VERSION
+from .optimizer import SearchLimits, mitigate
 from .reference_detectors import ReferenceScheme
 from .scanner import (
     baseline_fingerprints,
@@ -40,6 +43,7 @@ from .scanner import (
 from .scanner_config import resolve_scanner_config
 from .schemas import public_schema
 from .scoring import load
+from .strategies import registered_strategy
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -179,6 +183,72 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--detector", default="unicode-artifacts-v1", help="registered detector name"
     )
+    localization = sub.add_parser(
+        "localize",
+        help="locate spans implicated by a named detector without changing text",
+    )
+    localization.add_argument("text", nargs="?", help="text; omit to read stdin")
+    localization.add_argument("--input", type=Path, help="read UTF-8 text from a file")
+    localization.add_argument("--detector", required=True, help="registered detector name")
+    localization.add_argument(
+        "--window-characters", type=int, default=1200, help="fallback window size"
+    )
+    localization.add_argument(
+        "--stride-characters", type=int, default=600, help="fallback window stride"
+    )
+    localization.add_argument(
+        "--familywise-alpha", type=float, default=0.01, help="window-search error rate"
+    )
+    localization.add_argument(
+        "--max-detector-queries", type=int, help="cap detector calls for this request"
+    )
+    localization.add_argument(
+        "--allow-network", action="store_true", help="allow this detector to transmit text"
+    )
+    localization.add_argument(
+        "--allow-model-download",
+        action="store_true",
+        help="allow this detector to acquire a model",
+    )
+    mitigation = sub.add_parser(
+        "mitigate",
+        help="search for the smallest quality-safe candidate verified by held-out detectors",
+    )
+    mitigation.add_argument("text", nargs="?", help="text; omit to read stdin")
+    mitigation.add_argument("--input", type=Path, help="read UTF-8 text from a file")
+    mitigation.add_argument("--detector", required=True, help="primary search detector")
+    mitigation.add_argument(
+        "--verifier",
+        action="append",
+        required=True,
+        help="distinct calibrated verifier; repeat for more than one",
+    )
+    mitigation.add_argument(
+        "--strategy",
+        action="append",
+        required=True,
+        help="registered transformer provider; repeat to search a portfolio",
+    )
+    mitigation.add_argument(
+        "--consent",
+        action="store_true",
+        help="consent to candidate generation under the declared permissions",
+    )
+    mitigation.add_argument(
+        "--allow-network", action="store_true", help="allow declared remote candidate work"
+    )
+    mitigation.add_argument(
+        "--allow-model-download",
+        action="store_true",
+        help="allow declared model acquisition",
+    )
+    mitigation.add_argument("--format", choices=("json", "text"), default="json")
+    mitigation.add_argument("--max-rounds", type=int, default=2)
+    mitigation.add_argument("--beam-width", type=int, default=4)
+    mitigation.add_argument("--max-candidates", type=int)
+    mitigation.add_argument("--max-transform-calls", type=int)
+    mitigation.add_argument("--max-detector-queries", type=int)
+    mitigation.add_argument("--max-verification-candidates", type=int, default=8)
     sub.add_parser("capabilities", help="show installed features without network or model loading")
     skill = sub.add_parser(
         "skill",
@@ -227,7 +297,7 @@ def _parser() -> argparse.ArgumentParser:
         "scaffold",
         help="copy one adapter pack into a new directory without overwriting files",
     )
-    detector_scaffold.add_argument("--pack", choices=("kgw", "synthid"), required=True)
+    detector_scaffold.add_argument("--pack", choices=("kgw", "synthid", "unigram"), required=True)
     detector_scaffold.add_argument("--output", type=Path, required=True)
     schema = sub.add_parser("schema", help="print a packaged JSON Schema")
     schema.add_argument(
@@ -237,7 +307,14 @@ def _parser() -> argparse.ArgumentParser:
             "evidence-receipt",
             "detector-capability",
             "command-detector",
+            "command-strategy",
+            "localization-result",
+            "mitigation-result",
             "benchmark-evidence-bundle",
+            "benchmark-comparator-registry",
+            "benchmark-protocol-manifest",
+            "benchmark-run-config",
+            "benchmark-input-corpus",
             "benchmark-observation-set",
             "benchmark-replication-record",
             "benchmark-sample-registry",
@@ -452,6 +529,79 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             source, candidate = _read_verify(args)
             _emit(verify_text(source, candidate, args.detector))
             return EXIT_OK
+        if args.command == "localize":
+            config = replace(
+                DewatermarkConfig.from_env(),
+                allow_remote_processing=bool(args.allow_network),
+                allow_model_download=bool(args.allow_model_download),
+            )
+            session = DetectorSession(
+                args.detector,
+                config=config,
+                max_queries=args.max_detector_queries,
+            )
+            localization_report = localize(
+                _read(args),
+                session,
+                window_characters=args.window_characters,
+                stride_characters=args.stride_characters,
+                familywise_alpha=args.familywise_alpha,
+            )
+            _emit(localization_report.to_dict())
+            return EXIT_PROCESSING if localization_report.status == "failed" else EXIT_OK
+        if args.command == "mitigate":
+            if not args.consent:
+                raise ConsentRequiredError
+            config = replace(
+                DewatermarkConfig.from_env(),
+                allow_remote_processing=bool(args.allow_network),
+                allow_model_download=bool(args.allow_model_download),
+            )
+            max_candidates = (
+                args.max_candidates
+                if args.max_candidates is not None
+                else config.max_search_candidates
+            )
+            max_transform_calls = (
+                args.max_transform_calls if args.max_transform_calls is not None else max_candidates
+            )
+            limits = SearchLimits(
+                max_rounds=args.max_rounds,
+                beam_width=args.beam_width,
+                max_candidates=max_candidates,
+                max_transform_calls=max_transform_calls,
+                max_detector_queries=(
+                    args.max_detector_queries
+                    if args.max_detector_queries is not None
+                    else config.max_detector_queries
+                ),
+                max_candidate_characters=config.max_input_chars,
+                max_verification_candidates=args.max_verification_candidates,
+            )
+            source_text = _read(args)
+            strategies = [registered_strategy(name, config) for name in args.strategy]
+            mitigation_result = mitigate(
+                source_text,
+                args.detector,
+                strategies,
+                verifier_detectors=args.verifier,
+                config=config,
+                limits=limits,
+            )
+            _emit(
+                (
+                    mitigation_result.cleaned_text
+                    if args.format == "text"
+                    else mitigation_result.to_dict()
+                ),
+                args.format,
+            )
+            return (
+                EXIT_OK
+                if mitigation_result.status == "verified"
+                or mitigation_result.reason_code == "source_not_detected"
+                else EXIT_PROCESSING
+            )
         if args.command == "capabilities":
             _emit(capabilities())
             return EXIT_OK
@@ -768,8 +918,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(json.dumps({"status": "failed", "error": str(exc)}), file=sys.stderr)
         return EXIT_USAGE
     except ConsentRequiredError:
+        operation = "mitigate" if args.command == "mitigate" else "apply"
         print(
-            json.dumps({"status": "failed", "error": "apply requires explicit consent=true"}),
+            json.dumps(
+                {"status": "failed", "error": f"{operation} requires explicit consent=true"}
+            ),
             file=sys.stderr,
         )
         return EXIT_USAGE

@@ -1,7 +1,9 @@
+import hashlib
 import json
 import sys
 import time
 from argparse import Namespace
+from pathlib import Path
 
 import pytest
 from manifest import (
@@ -14,7 +16,13 @@ from manifest import (
     finalize_manifest,
 )
 
-from adapters import AdapterContractError, CommandScheme, _public_mapping, _split_command
+from adapters import (
+    AdapterContractError,
+    CommandScheme,
+    _argument_name,
+    _public_mapping,
+    _split_command,
+)
 
 
 def _sidecar(name="test", family="greenlist", source="fixture", minimum=2):
@@ -87,12 +95,25 @@ def test_windows_command_parser_preserves_paths_and_quotes():
     )
 
 
+def test_option_name_classification_does_not_treat_positional_paths_as_options():
+    assert _argument_name("/Users/alice/config.json", windows=False) is None
+    assert _argument_name("/configuration", windows=False) is None
+    assert _argument_name("/configuration", windows=True) == "configuration"
+    assert _argument_name("/configuration:C:\\private\\config.json", windows=True) == (
+        "configuration"
+    )
+    assert _argument_name("C:\\private\\config.json", windows=True) is None
+
+
 @pytest.mark.parametrize(
     "command",
     [
         "python adapter.py --token private",
         "python adapter.py --api-key=private",
         "python adapter.py https://user:password@example.test/run",
+        "python adapter.py '--header=X-Api-Key: PRIVATE_CREDENTIAL_123456789'",
+        "python adapter.py '--env=AWS_SECRET_ACCESS_KEY=private-credential-123456789'",
+        "python adapter.py '--header=Authorization: Bearer privatecredential123456789'",
     ],
 )
 def test_adapter_command_refuses_credential_arguments(command):
@@ -100,9 +121,148 @@ def test_adapter_command_refuses_credential_arguments(command):
         _split_command(command)
 
 
-def test_adapter_command_allows_public_key_fingerprints():
-    command = "python adapter.py --key-fingerprint sha256-public"
-    assert _split_command(command)[-2:] == ("--key-fingerprint", "sha256-public")
+def test_adapter_command_allows_public_key_ids():
+    command = "python adapter.py --key-id public-partition-id"
+    assert _split_command(command)[-2:] == ("--key-id", "public-partition-id")
+    secret_file = "python adapter.py --secret-file /tmp/credentials.json"
+    assert _split_command(secret_file)[-2:] == ("--secret-file", "/tmp/credentials.json")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("python", "--header=X-Api-Key: PRIVATE_CREDENTIAL_123456789"),
+        ("python", "--env=AWS_SECRET_ACCESS_KEY=private-credential-123456789"),
+        ("python", "--header=Authorization: Bearer privatecredential123456789"),
+    ],
+)
+def test_direct_command_adapter_refuses_credential_containers(command):
+    with pytest.raises(ValueError, match="cannot carry credentials"):
+        CommandScheme(name="test", command=command, family="fixture", source="fixture")
+
+
+def test_direct_command_adapter_allows_operator_secret_file_reference():
+    adapter = CommandScheme(
+        name="test",
+        command=("python", "adapter.py", "--secret-file", "/tmp/credentials.json"),
+        family="fixture",
+        source="fixture",
+    )
+
+    assert adapter.command[-2:] == ("--secret-file", "/tmp/credentials.json")
+
+
+@pytest.mark.parametrize("option", ["--key-file", "/key-file"])
+@pytest.mark.parametrize("inline", [False, True])
+def test_operator_secret_file_is_never_hashed_into_public_command_identity(
+    tmp_path, option, inline
+):
+    script = tmp_path / "adapter.py"
+    script.write_text("pass\n", encoding="utf-8")
+    secret_file = tmp_path / "operator-key.json"
+    secret_file.write_text("weak-secret-key-material", encoding="utf-8")
+    renamed_secret_file = tmp_path / "renamed-operator-key.json"
+    renamed_secret_file.write_bytes(secret_file.read_bytes())
+    secret_digest = hashlib.sha256(secret_file.read_bytes()).hexdigest()
+    secret_arguments = (f"{option}={secret_file}",) if inline else (option, str(secret_file))
+    adapter = CommandScheme(
+        name="test",
+        command=(sys.executable, str(script), *secret_arguments),
+        family="fixture",
+        source="fixture",
+    )
+
+    manifest = adapter.reproducibility_manifest()
+    renamed_secret_arguments = (
+        (f"{option}={renamed_secret_file}",) if inline else (option, str(renamed_secret_file))
+    )
+    renamed_manifest = CommandScheme(
+        name="test",
+        command=(sys.executable, str(script), *renamed_secret_arguments),
+        family="fixture",
+        source="fixture",
+    ).reproducibility_manifest()
+    rendered = json.dumps(manifest, sort_keys=True)
+
+    assert secret_digest not in rendered
+    assert secret_file.name not in rendered
+    assert renamed_secret_file.name not in json.dumps(renamed_manifest, sort_keys=True)
+    assert hashlib.sha256(script.read_bytes()).hexdigest() in rendered
+    assert manifest["command_sha256"] == renamed_manifest["command_sha256"]
+
+
+def test_arbitrary_file_option_is_not_published_as_an_executable_digest(tmp_path):
+    script_directory = tmp_path / "code"
+    config_directory = tmp_path / "operator-data"
+    script_directory.mkdir()
+    config_directory.mkdir()
+    script = script_directory / "adapter.py"
+    script.write_text("pass\n", encoding="utf-8")
+    config = config_directory / "operator-config.json"
+    credential = "sk-live-PRIVATECONFIGCREDENTIAL123456789"
+    config.write_text(json.dumps({"api_key": credential}), encoding="utf-8")
+    Path(f"{config}.manifest.json").write_text(json.dumps(_sidecar()), encoding="utf-8")
+    config_digest = hashlib.sha256(config.read_bytes()).hexdigest()
+    adapter = CommandScheme(
+        name="test",
+        command=(sys.executable, str(script), "--config", str(config)),
+        family="fixture",
+        source="fixture",
+    )
+
+    manifest = adapter.reproducibility_manifest()
+    rendered = json.dumps(manifest, sort_keys=True)
+
+    assert adapter.sidecar_path is None
+    assert [item["argument_index"] for item in manifest["executable_digests"]] == [0, 1]
+    assert hashlib.sha256(script.read_bytes()).hexdigest() in rendered
+    assert config.name not in rendered
+    assert config_digest not in rendered
+    assert credential not in rendered
+
+
+def test_adapter_name_rejects_credential_shaped_value():
+    private_name = "sk-live-PRIVATEADAPTERCREDENTIAL123456789"
+
+    with pytest.raises(ValueError, match="public registered identifier") as direct_error:
+        CommandScheme(
+            name=private_name,
+            command=("python", "adapter.py"),
+            family="fixture",
+            source="fixture",
+        )
+    assert private_name not in str(direct_error.value)
+
+    with pytest.raises(ValueError, match="public registered identifier") as spec_error:
+        CommandScheme.from_spec(f"{private_name}|fixture|source|python adapter.py")
+    assert private_name not in str(spec_error.value)
+
+
+@pytest.mark.parametrize(
+    "private_value",
+    [
+        "sk-live-PRIVATECREDENTIAL123456789",
+        "Bearer PRIVATECREDENTIAL123456789",
+        "https://user:password@example.test/source",
+        "/Users/alice/private/source.json",
+    ],
+)
+@pytest.mark.parametrize("field", ["family", "source"])
+def test_adapter_identity_rejects_private_values_before_discovery(private_value, field):
+    values = {"family": "fixture", "source": "fixture"}
+    values[field] = private_value
+    with pytest.raises(ValueError, match="public metadata") as direct_error:
+        CommandScheme(
+            name="test",
+            command=("python", "adapter.py"),
+            family=values["family"],
+            source=values["source"],
+        )
+    assert private_value not in str(direct_error.value)
+
+    with pytest.raises(ValueError, match="public metadata") as spec_error:
+        CommandScheme.from_spec(f"test|{values['family']}|{values['source']}|python adapter.py")
+    assert private_value not in str(spec_error.value)
 
 
 def test_manifest_checkpoint_resume(tmp_path):
@@ -171,6 +331,87 @@ def test_static_sidecar_discovery_does_not_execute_adapter(tmp_path):
     assert not marker.exists()
 
 
+def test_python_isolation_flag_keeps_script_in_content_identity(tmp_path):
+    script = tmp_path / "adapter.py"
+    script.write_text("print('first')\n", encoding="utf-8")
+    sidecar = tmp_path / "adapter.py.manifest.json"
+    sidecar.write_text(json.dumps(_sidecar()), encoding="utf-8")
+    command = (sys.executable, "-I", str(script))
+
+    first = CommandScheme(
+        name="test", command=command, family="greenlist", source="fixture"
+    ).reproducibility_manifest()
+    script.write_text("print('mutated')\n", encoding="utf-8")
+    second = CommandScheme(
+        name="test", command=command, family="greenlist", source="fixture"
+    ).reproducibility_manifest()
+
+    assert [item["argument_index"] for item in first["executable_digests"]] == [0, 2]
+    assert first["command_sha256"] != second["command_sha256"]
+    assert first["independent"] is True
+    assert first["reproducible"] is True
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("-m", "fixture.module"),
+        ("-c", "pass"),
+        ("--unknown-runtime-option", "{script}"),
+    ],
+)
+def test_ambiguous_python_invocation_fails_reproducibility_and_independence(tmp_path, arguments):
+    script = tmp_path / "adapter.py"
+    script.write_text("pass\n", encoding="utf-8")
+    sidecar = tmp_path / "explicit-sidecar.json"
+    sidecar.write_text(json.dumps(_sidecar()), encoding="utf-8")
+    resolved_arguments = tuple(
+        str(script) if argument == "{script}" else argument for argument in arguments
+    )
+    adapter = CommandScheme(
+        name="test",
+        command=(sys.executable, *resolved_arguments),
+        family="greenlist",
+        source="fixture",
+        sidecar_path=sidecar,
+    )
+
+    manifest = adapter.reproducibility_manifest()
+
+    assert [item["argument_index"] for item in manifest["executable_digests"]] == [0]
+    assert "adapter_executable_digest_unresolved" in manifest["reproducibility_blockers"]
+    assert manifest["independent"] is False
+    assert manifest["reproducible"] is False
+
+
+@pytest.mark.parametrize(
+    "private_value",
+    [
+        "sk-live-PRIVATECREDENTIAL123456789",
+        "https://user:password@example.test/adapter",
+        "Bearer PRIVATECREDENTIAL123456789",
+        "/Users/alice/private/adapter.json",
+    ],
+)
+def test_static_sidecar_rejects_private_values_before_execution(tmp_path, private_value):
+    marker = tmp_path / "executed"
+    script = tmp_path / "adapter.py"
+    script.write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('x')\n", encoding="utf-8"
+    )
+    manifest = _sidecar()
+    manifest["note"] = private_value
+    sidecar = tmp_path / "adapter.py.manifest.json"
+    sidecar.write_text(json.dumps(manifest), encoding="utf-8")
+    adapter = CommandScheme.from_spec(f"test|greenlist|fixture|{sys.executable} {script}")
+
+    with pytest.raises(AdapterContractError, match="non-public metadata") as error:
+        adapter.manifest()
+
+    assert private_value not in str(error.value)
+    assert not marker.exists()
+
+
 def test_independence_fails_closed_without_complete_sidecar(tmp_path):
     script = tmp_path / "adapter.py"
     script.write_text("pass\n", encoding="utf-8")
@@ -221,6 +462,23 @@ def test_adapter_subprocess_does_not_inherit_ambient_secret(tmp_path, monkeypatc
     )
     adapter = CommandScheme.from_spec(f"test|greenlist|fixture|{sys.executable} {script}")
     assert adapter.capabilities()["leaked"] is None
+
+
+def test_adapter_rejects_private_capability_values_before_caching(tmp_path):
+    private_value = "sk-live-PRIVATECAPABILITY123456789"
+    script = tmp_path / "adapter.py"
+    script.write_text(
+        "import json,sys\n"
+        f"json.dump({{'protocol_version':'1.0','note':{private_value!r}}},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    adapter = CommandScheme.from_spec(f"test|greenlist|fixture|{sys.executable} {script}")
+
+    with pytest.raises(AdapterContractError, match="non-public capability") as error:
+        adapter.capabilities()
+
+    assert private_value not in str(error.value)
+    assert adapter._capabilities is None
 
 
 def test_content_addressed_score_tables_never_accept_text():

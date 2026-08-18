@@ -18,6 +18,8 @@ v0.2 names remain temporary compatibility aliases:
   DEWATERMARK_LLM_API_KEY           OpenAI-compatible chat endpoint key
   DEWATERMARK_LLM_BASE_URL          default https://api.moonshot.ai/v1
   DEWATERMARK_LLM_MODEL             default kimi-k2.6
+  DEWATERMARK_MAX_DETECTOR_QUERIES  default 64 per mitigation request
+  DEWATERMARK_MAX_SEARCH_CANDIDATES default 24 generated candidates
 """
 
 from __future__ import annotations
@@ -102,6 +104,8 @@ class DewatermarkConfig:
     max_remote_calls: int = 16
     max_output_tokens: int = 2048
     max_batch_items: int = 1000
+    max_detector_queries: int = 64
+    max_search_candidates: int = 24
     model_cache_size: int = 2
     random_seed: int = 13
     require_verified: bool = False
@@ -160,6 +164,16 @@ class DewatermarkConfig:
             raise ConfigurationError("max_output_tokens must be between 32 and 32768")
         if type(self.max_batch_items) is not int or not 1 <= self.max_batch_items <= 100_000:
             raise ConfigurationError("max_batch_items must be between 1 and 100000")
+        if (
+            type(self.max_detector_queries) is not int
+            or not 1 <= self.max_detector_queries <= 100_000
+        ):
+            raise ConfigurationError("max_detector_queries must be between 1 and 100000")
+        if (
+            type(self.max_search_candidates) is not int
+            or not 1 <= self.max_search_candidates <= 1000
+        ):
+            raise ConfigurationError("max_search_candidates must be between 1 and 1000")
         if type(self.model_cache_size) is not int or not 1 <= self.model_cache_size <= 8:
             raise ConfigurationError("model_cache_size must be between 1 and 8")
         if type(self.random_seed) is not int or self.random_seed < 0:
@@ -217,6 +231,8 @@ class DewatermarkConfig:
             max_remote_calls=_env_int("MAX_REMOTE_CALLS", 16),
             max_output_tokens=_env_int("MAX_OUTPUT_TOKENS", 2048),
             max_batch_items=_env_int("MAX_BATCH_ITEMS", 1000),
+            max_detector_queries=_env_int("MAX_DETECTOR_QUERIES", 64),
+            max_search_candidates=_env_int("MAX_SEARCH_CANDIDATES", 24),
             model_cache_size=_env_int("MODEL_CACHE_SIZE", 2),
             random_seed=_env_int("RANDOM_SEED", 13),
             require_verified=_env_bool("REQUIRE_VERIFIED", False),

@@ -191,13 +191,13 @@ def test_scorer_and_sira_failures_and_cache_metadata_are_private(monkeypatch):
             pass
 
         def self_information(self, _text):
-            raise RuntimeError(SECRET)
+            raise RuntimeError(_text)
 
     register_provider("leaky-scorer", LeakyScorer)
     config = replace(DewatermarkConfig(local_lm_enabled=False), scorer_provider="leaky-scorer")
     try:
         with pytest.raises(scoring.ScorerUnavailable) as scorer_error:
-            scoring.self_information("source", config)
+            scoring.self_information(SECRET, config)
         _assert_private_error(scorer_error.value)
         assert SECRET not in json.dumps(scoring.surrogate_score("source", config))
     finally:
@@ -320,7 +320,7 @@ def test_public_diagnostics_never_reflect_extension_class_names_or_reprs(caplog)
             "capability": CapabilityManifest(
                 identifier="privacy-gate",
                 kind="quality_gate",
-                metadata={"nested": {"api_key": SECRET}},
+                metadata={"status": "registered"},
             ),
             "evaluate": lambda _self, _source, _candidate: None,
             "__repr__": forbidden_representation,
@@ -375,7 +375,7 @@ def test_public_diagnostics_never_reflect_extension_class_names_or_reprs(caplog)
                 identifier="privacy-doctor-detector",
                 kind="detector",
                 schemes=("fixture",),
-                metadata={"nested": {"credential": SECRET}},
+                metadata={"status": "registered"},
             ),
             "__call__": lambda self, _config=None: self,
             "available": lambda _self: True,
@@ -403,7 +403,7 @@ def test_public_diagnostics_never_reflect_extension_class_names_or_reprs(caplog)
     assert class_secret not in rendered
 
 
-def test_capability_credentials_and_host_paths_cannot_enter_plan_or_removal_json():
+def test_capability_credentials_and_host_paths_are_rejected_before_registration():
     credential = "sk-live-PRIVATE-CAPABILITY-CREDENTIAL-123456789"
     private_path = "/Users/private/Documents/secret-model.bin"
 
@@ -435,25 +435,15 @@ def test_capability_credentials_and_host_paths_cannot_enter_plan_or_removal_json
                 text_characters=len(text),
             )
 
-    register_detector("public-capability-fixture", Detector)
-    try:
-        plan = create_plan(
-            "plain source",
-            mode="sanitize",
-            detector="public-capability-fixture",
-            config=DewatermarkConfig(),
-        )
-        result = remove(
-            "plain source",
-            mode="sanitize",
-            detector="public-capability-fixture",
-            config=DewatermarkConfig(),
-        )
-    finally:
-        unregister_detector("public-capability-fixture")
+    with pytest.raises(ConfigurationError) as caught:
+        register_detector("public-capability-fixture", Detector)
 
-    rendered = json.dumps([Detector.capability.to_dict(), plan, result.to_dict()])
+    rendered = json.dumps(Detector.capability.to_dict())
+    assert credential not in str(caught.value)
+    assert private_path not in str(caught.value)
     assert credential not in rendered
     assert private_path not in rendered
     assert Detector.capability.identifier == "redacted-identifier"
     assert "<redacted>" in rendered
+    with pytest.raises(ConfigurationError, match="unknown detector"):
+        providers.detector_manifest("public-capability-fixture")

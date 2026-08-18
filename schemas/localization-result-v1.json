@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyzanfar/text-watermark-remover/main/schemas/localization-result-v1.json",
+  "title": "DewatermarkLocalizationResult",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "method",
+    "detector",
+    "text_sha256",
+    "text_characters",
+    "window_characters",
+    "stride_characters",
+    "windows_scored",
+    "spans",
+    "detector_ledger"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "status": {
+      "enum": [
+        "localized",
+        "localized_exploratory",
+        "not_detected",
+        "not_localized",
+        "insufficient_evidence",
+        "failed"
+      ]
+    },
+    "method": {
+      "enum": [
+        "detector_attribution",
+        "bonferroni_windows",
+        "exploratory_windows",
+        "none"
+      ]
+    },
+    "detector": {"type": "string", "minLength": 1},
+    "text_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "text_characters": {"type": "integer", "minimum": 1},
+    "window_characters": {"type": "integer", "minimum": 32},
+    "stride_characters": {"type": "integer", "minimum": 1},
+    "windows_scored": {"type": "integer", "minimum": 0, "maximum": 100000},
+    "spans": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "contributing_windows"],
+        "properties": {
+          "start": {"type": "integer", "minimum": 0},
+          "end": {"type": "integer", "minimum": 1},
+          "contributing_windows": {"type": "integer", "minimum": 1},
+          "strongest_margin": {"type": "number"},
+          "smallest_p_value": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "familywise_alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "adjusted_window_alpha": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "reason_code": {"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"},
+    "detector_ledger": {
+      "type": "object",
+      "required": [
+        "detector_queries_used",
+        "detector_queries_limit",
+        "detector_queries_remaining",
+        "detector_cache_entries"
+      ],
+      "properties": {
+        "detector_queries_used": {"type": "integer", "minimum": 0},
+        "detector_queries_limit": {"type": "integer", "minimum": 1},
+        "detector_queries_remaining": {"type": "integer", "minimum": 0},
+        "detector_cache_entries": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "localized"}
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "method": {"enum": ["detector_attribution", "bonferroni_windows"]},
+          "spans": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"status": {"const": "localized_exploratory"}},
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "method": {"enum": ["detector_attribution", "exploratory_windows"]},
+          "spans": {"minItems": 1}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "not_detected",
+              "not_localized",
+              "insufficient_evidence",
+              "failed"
+            ]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {"properties": {"spans": {"maxItems": 0}}}
+    },
+    {
+      "if": {
+        "properties": {"method": {"const": "bonferroni_windows"}},
+        "required": ["method"]
+      },
+      "then": {
+        "required": ["familywise_alpha", "adjusted_window_alpha"],
+        "properties": {"status": {"enum": ["localized", "not_localized"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"method": {"const": "exploratory_windows"}},
+        "required": ["method"]
+      },
+      "then": {
+        "properties": {
+          "status": {"enum": ["localized_exploratory", "not_localized"]}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "localized"},
+          "method": {"const": "detector_attribution"}
+        },
+        "required": ["status", "method"]
+      },
+      "then": {
+        "properties": {
+          "spans": {"items": {"required": ["smallest_p_value"]}}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"method": {"const": "none"}}, "required": ["method"]},
+      "then": {
+        "properties": {"spans": {"maxItems": 0}}
+      }
+    }
+  ],
+  "additionalProperties": false
+}

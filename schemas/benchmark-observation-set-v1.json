@@ -65,7 +65,90 @@
       "additionalProperties": false,
       "required": ["model_size_bytes"],
       "properties": {
-        "model_size_bytes": { "type": ["integer", "null"], "minimum": 0 }
+        "model_size_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "execution_budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["limits", "usage", "deadline_at_unix"],
+          "properties": {
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "max_records",
+                "max_requested_tokens",
+                "max_adapter_processes",
+                "deadline_seconds",
+                "max_cancellation_checks"
+              ],
+              "properties": {
+                "max_records": { "type": "integer", "minimum": 1 },
+                "max_requested_tokens": { "type": "integer", "minimum": 1 },
+                "max_adapter_processes": { "type": "integer", "minimum": 1 },
+                "deadline_seconds": { "type": "integer", "minimum": 1 },
+                "max_cancellation_checks": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "usage": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "records",
+                "requested_tokens",
+                "adapter_processes",
+                "cancellation_checks"
+              ],
+              "properties": {
+                "records": { "type": "integer", "minimum": 0 },
+                "requested_tokens": { "type": "integer", "minimum": 0 },
+                "adapter_processes": { "type": "integer", "minimum": 0 },
+                "cancellation_checks": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "deadline_at_unix": { "type": "number", "minimum": 0 }
+          }
+        },
+        "adapter_processes": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["started", "completed", "failed", "telemetry_incomplete"],
+          "properties": {
+            "started": { "type": "integer", "minimum": 0 },
+            "completed": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 },
+            "telemetry_incomplete": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "adapter_process_resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "telemetry_complete",
+            "wall_time_seconds",
+            "peak_rss_bytes",
+            "remote_queries",
+            "generated_tokens",
+            "estimated_cost_usd"
+          ],
+          "properties": {
+            "telemetry_complete": { "type": "boolean" },
+            "wall_time_seconds": { "type": "number", "minimum": 0 },
+            "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 },
+            "remote_queries": { "type": ["integer", "null"], "minimum": 0 },
+            "generated_tokens": { "type": ["integer", "null"], "minimum": 0 },
+            "estimated_cost_usd": { "type": ["number", "null"], "minimum": 0 }
+          }
+        },
+        "run_attempts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sample_failures", "observation_failures", "observation_attempts"],
+          "properties": {
+            "sample_failures": { "type": "integer", "minimum": 0 },
+            "observation_failures": { "type": "integer", "minimum": 0 },
+            "observation_attempts": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     },
     "human_review": {
@@ -171,7 +254,32 @@
         "quality_gate_passed": { "type": ["boolean", "null"] },
         "task_check_passed": { "type": ["boolean", "null"] },
         "error_class": { "type": ["string", "null"], "maxLength": 256 },
-        "telemetry": {
+        "telemetry": { "$ref": "#/$defs/attemptTelemetry" },
+        "attempt_history": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "attempt_index",
+              "state",
+              "error_class",
+              "telemetry",
+              "telemetry_complete"
+            ],
+            "properties": {
+              "attempt_index": { "type": "integer", "minimum": 1 },
+              "state": { "enum": ["accepted", "failed", "abstained"] },
+              "error_class": { "type": ["string", "null"], "maxLength": 256 },
+              "telemetry": { "$ref": "#/$defs/attemptTelemetry" },
+              "telemetry_complete": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "attemptTelemetry": {
           "type": "object",
           "additionalProperties": false,
           "required": [
@@ -184,12 +292,10 @@
           "properties": {
             "wall_time_seconds": { "type": "number", "minimum": 0 },
             "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 },
-            "remote_queries": { "type": "integer", "minimum": 0 },
-            "generated_tokens": { "type": "integer", "minimum": 0 },
-            "estimated_cost_usd": { "type": "number", "minimum": 0 }
+            "remote_queries": { "type": ["integer", "null"], "minimum": 0 },
+            "generated_tokens": { "type": ["integer", "null"], "minimum": 0 },
+            "estimated_cost_usd": { "type": ["number", "null"], "minimum": 0 }
           }
-        }
-      }
     }
   }
 }
