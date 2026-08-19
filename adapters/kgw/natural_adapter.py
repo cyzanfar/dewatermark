@@ -63,6 +63,10 @@ def _canonical(value: Any) -> bytes:
     )
 
 
+def _population_count(value: int) -> int:
+    return bin(value).count("1")
+
+
 def _read_bounded(path: Path, limit: int) -> bytes:
     descriptor = -1
     try:
@@ -251,7 +255,7 @@ def _load_transitions(path: Path, configuration: Mapping[str, Any]) -> tuple[int
         if not isinstance(row, str) or len(row) != width or re.fullmatch(r"[0-9a-f]+", row) is None:
             raise ValueError("transition_table_invalid")
         bits = int(row, 16)
-        if bits.bit_count() != expected_green:
+        if _population_count(bits) != expected_green:
             raise ValueError("transition_table_invalid")
         parsed.append(bits)
     return tuple(parsed)

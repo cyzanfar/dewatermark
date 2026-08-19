@@ -578,6 +578,52 @@ def test_distinct_command_implementation_commitments_can_verify(command_fixture,
     assert verifier_marker.exists()
 
 
+def test_command_verification_does_not_walk_generic_extension_state(
+    command_fixture, tmp_path, monkeypatch
+):
+    target = "a" * 64
+    verifier_fixture = tmp_path / "independent_without_generic_state.py"
+    shutil.copyfile(command_fixture, verifier_fixture)
+    verifier_fixture.write_text(
+        verifier_fixture.read_text(encoding="utf-8").replace("score=2.0 if", "score=3.0 if"),
+        encoding="utf-8",
+    )
+    primary = _detector(
+        command_fixture,
+        tmp_path / "no-generic-state-primary.json",
+        manifest=_manifest(
+            identifier="fixture-no-generic-state-primary",
+            implementation_sha256="1" * 64,
+            watermark_target_sha256=target,
+        ),
+    )
+    verifier = _detector(
+        verifier_fixture,
+        tmp_path / "no-generic-state-verifier.json",
+        manifest=_manifest(
+            identifier="fixture-no-generic-state-verifier",
+            implementation_sha256="2" * 64,
+            watermark_target_sha256=target,
+        ),
+    )
+
+    def generic_identity_must_not_receive_commands(*_args, **_kwargs):
+        raise AssertionError("exact command detectors have a bounded identity projection")
+
+    monkeypatch.setattr(
+        detector_session_module,
+        "extension_identity",
+        generic_identity_must_not_receive_commands,
+    )
+
+    result = DetectorSession(primary, verifier_detectors=(verifier,)).verify(
+        "marked source", "clear candidate"
+    )
+
+    assert result.status == "verified"
+    assert result.verified is True
+
+
 def test_distinct_declared_commitments_cannot_alias_one_command(command_fixture, tmp_path):
     target = "a" * 64
     primary_marker = tmp_path / "primary-code-alias.json"

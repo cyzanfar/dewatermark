@@ -68,6 +68,10 @@ def _canonical(value: Any) -> bytes:
     )
 
 
+def _population_count(value: int) -> int:
+    return bin(value).count("1")
+
+
 def _sha256(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -235,7 +239,7 @@ def _load_mask(path: Path, configuration: Mapping[str, Any]) -> int:
     ):
         raise ValueError("mask_invalid")
     bits = int(encoded, 16)
-    if bits.bit_count() != int(vocab_size * float(configuration["fraction"])):
+    if _population_count(bits) != int(vocab_size * float(configuration["fraction"])):
         raise ValueError("mask_invalid")
     return bits
 

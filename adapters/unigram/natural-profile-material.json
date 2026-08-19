@@ -7,7 +7,7 @@
     "green-mask-v1.json": "315779f3811b3d4f5949452b05c43ad1ff5bd0a3e8277987d2351678fe4d2e42",
     "natural-threshold-evidence.json": "e7a793bfaed11d7da5c4139be7d510f562be2285dea86a89960224dfd497bb76",
     "natural-tokenizer.json": "73abd255f2d86d5fb5149edf7f6458d9ef060f7cb0f6567311120ae5a94c26f8",
-    "natural_adapter.py": "6ac2f4db67b8cb2d73e5d0f5839c60804abc4724feece667bad6f3bdc3aa5dc6",
+    "natural_adapter.py": "29aab3f8704a4a3498f19e3d7299c077fb603e5afe4715ec9cfa4fd83743c485",
     "upstream/gptwm.py": "2059bf7057cd66784899379ca93492dfd217ae8fb4684e4d6cb02bca4c00d3b1"
   },
   "kind": "content-addressed-reference-profile-material-v1",

@@ -21,7 +21,7 @@
       "passed": true
     }
   ],
-  "configuration_sha256": "3e6f300fb62b7d7dc7c52755a35fca156a67ccfd41f36176d9c6d13c4181e646",
+  "configuration_sha256": "911356252ca3512c3ec92c0797a38c232d764e22ce8b70ee1a0bfdaeaebb8972",
   "independent_scorer": "natural_adapter.py fixed-mask scorer",
   "numeric_absolute_tolerance": 1e-15,
   "numeric_relative_tolerance": 1e-12,

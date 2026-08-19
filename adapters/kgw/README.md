@@ -58,6 +58,13 @@ standalone profile is not separately signed; released wheels and source
 archives inherit the repository's GitHub OIDC provenance attestation. Verify
 the containing distribution before relying on those hashes.
 
+After a behavior-preserving maintenance edit to `natural_adapter.py`, refresh
+the content-addressed material, configuration, conformance, and capability
+chain with `python build_natural_profile.py --refresh-bindings`. The command
+stages and replays the complete public fixture before publishing any refreshed
+commitment, and rejects semantic drift without requiring the private build key
+or pinned upstream checkout.
+
 ## Arbitrary local tokenizer operator adapter
 
 `operator_adapter.py` supports natural text from a real, local Hugging Face

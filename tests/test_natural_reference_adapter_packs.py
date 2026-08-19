@@ -62,6 +62,117 @@ def _capability(value: dict[str, Any]) -> CapabilityManifest:
     )
 
 
+@pytest.mark.parametrize("name", ["kgw", "unigram"])
+def test_natural_adapter_population_count_supports_python_39(name):
+    adapter = _load(PACKS[name] / "natural_adapter.py", f"population_count_{name}_adapter")
+
+    assert adapter._population_count(0) == 0
+    assert adapter._population_count(0b101010101) == 5
+    assert adapter._population_count((1 << 256) - 1) == 256
+
+
+@pytest.mark.parametrize("name", ["kgw", "unigram"])
+def test_natural_profile_builder_transactionally_refreshes_behavior_preserving_bindings(
+    name, tmp_path
+):
+    copied = tmp_path / name
+    shutil.copytree(PACKS[name], copied)
+    adapter_path = copied / "natural_adapter.py"
+    adapter_path.write_text(
+        adapter_path.read_text(encoding="utf-8") + "\n# Behavior-preserving maintenance edit.\n",
+        encoding="utf-8",
+    )
+    builder = _load(copied / "build_natural_profile.py", f"refresh_{name}_builder")
+    old_configuration = json.loads(
+        (copied / "natural-adapter-config.json").read_text(encoding="utf-8")
+    )
+
+    builder.refresh_bindings(copied)
+
+    material = json.loads((copied / "natural-profile-material.json").read_text(encoding="utf-8"))
+    configuration = json.loads((copied / "natural-adapter-config.json").read_text(encoding="utf-8"))
+    assert (
+        material["files"]["natural_adapter.py"]
+        == hashlib.sha256(adapter_path.read_bytes()).hexdigest()
+    )
+    assert configuration["configuration_sha256"] != old_configuration["configuration_sha256"]
+    runner = _load(copied / "natural_conformance.py", f"refreshed_{name}_conformance")
+    assert runner.run(copied)["passed"] is True
+
+    binding_names = (
+        "natural-profile-material.json",
+        "natural-adapter-config.json",
+        "natural-conformance-record.json",
+        "natural-capability.json",
+    )
+    refreshed = {item: (copied / item).read_bytes() for item in binding_names}
+    builder.refresh_bindings(copied)
+    assert {item: (copied / item).read_bytes() for item in binding_names} == refreshed
+
+
+@pytest.mark.parametrize("name", ["kgw", "unigram"])
+def test_natural_profile_binding_refresh_rejects_semantic_drift_without_publication(name, tmp_path):
+    copied = tmp_path / name
+    shutil.copytree(PACKS[name], copied)
+    adapter_path = copied / "natural_adapter.py"
+    source = adapter_path.read_text(encoding="utf-8")
+    assert source.count('return bin(value).count("1")') == 1
+    adapter_path.write_text(
+        source.replace('return bin(value).count("1")', "return 0", 1), encoding="utf-8"
+    )
+    builder = _load(copied / "build_natural_profile.py", f"semantic_drift_{name}_builder")
+    binding_names = (
+        "natural-profile-material.json",
+        "natural-adapter-config.json",
+        "natural-conformance-record.json",
+        "natural-capability.json",
+    )
+    original = {item: (copied / item).read_bytes() for item in binding_names}
+
+    with pytest.raises(ValueError, match="semantic fixture outputs changed"):
+        builder.refresh_bindings(copied)
+
+    assert {item: (copied / item).read_bytes() for item in binding_names} == original
+    assert not list(copied.glob(".natural-profile-refresh-*"))
+
+
+@pytest.mark.parametrize("name", ["kgw", "unigram"])
+def test_natural_profile_binding_refresh_rolls_back_interrupted_publication(
+    name, tmp_path, monkeypatch
+):
+    copied = tmp_path / name
+    shutil.copytree(PACKS[name], copied)
+    adapter_path = copied / "natural_adapter.py"
+    adapter_path.write_text(
+        adapter_path.read_text(encoding="utf-8") + "\n# Behavior-preserving maintenance edit.\n",
+        encoding="utf-8",
+    )
+    builder = _load(copied / "build_natural_profile.py", f"interrupted_{name}_builder")
+    binding_names = (
+        "natural-profile-material.json",
+        "natural-adapter-config.json",
+        "natural-conformance-record.json",
+        "natural-capability.json",
+    )
+    original = {item: (copied / item).read_bytes() for item in binding_names}
+    replace = builder.os.replace
+    calls = 0
+
+    def fail_second(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("fixture publication failure")
+        replace(source, destination)
+
+    monkeypatch.setattr(builder.os, "replace", fail_second)
+    with pytest.raises(OSError, match="fixture publication failure"):
+        builder.refresh_bindings(copied)
+
+    assert {item: (copied / item).read_bytes() for item in binding_names} == original
+    assert not list(copied.glob(".natural-profile-refresh-*"))
+
+
 def _operator_configuration(adapter: Any, name: str) -> dict[str, Any]:
     files = {"tokenizer.json": "1" * 64}
     configuration = {

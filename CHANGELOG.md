@@ -68,11 +68,17 @@ This project follows Semantic Versioning. Public changes are recorded here.
 - Command detectors can bind explicit threshold-operator, watermark-target, and
   external-implementation digests. Held-out verification requires the complete
   static contract and rejects launcher aliases before either command receives text.
+- Command-detector verification now uses a bounded, privacy-safe identity
+  projection instead of recursively walking interpreter globals, preserving
+  fail-closed verification on Python 3.13 and across supported runtimes.
 - KGW and Unigram packs now use opaque key IDs with owner-only structured key
   records, strict upstream decision edges, closed-vocabulary fixture labels,
   relative/log-scale conformance comparisons, full runtime/platform pins,
   bounded tokenizer snapshots that reject credential-bearing filenames and
-  content before hashing, and atomic pair publication.
+  content before hashing, and atomic pair publication. Their natural reference
+  scorers remain compatible with Python 3.9, and their canonical builders can
+  transactionally refresh content bindings after behavior-preserving adapter
+  maintenance.
 - Mitigation receipts and schemas now bind detector roles, policy hashes,
   source/candidate hashes, paired decision evidence, quality acceptance, exact
   rollback, and a narrow claim scope before allowing a `verified` result.

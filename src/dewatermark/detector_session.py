@@ -112,6 +112,74 @@ def _verification_callable_state_safe(function: Any) -> bool:
     return True
 
 
+def _command_detector_state_sha256(
+    instance: Any,
+    capability: CapabilityManifest,
+    code_identity: str,
+    wrapper_identity: str,
+) -> str:
+    """Bind exact command-detector state without traversing interpreter globals.
+
+    ``CommandDetector`` is a host-owned final-style wrapper: its method dispatch
+    is bypassed explicitly at execution time and its external code has a
+    separate bounded identity.  Walking every global reachable from those host
+    methods is therefore redundant, varies with CPython internals, and can
+    exhaust the generic extension-state budget.  Keep this projection limited
+    to non-secret values that can affect command execution.
+    """
+    from .command_detector import _contract_from_manifest, _validate_limits
+
+    if type(code_identity) is not str or _SHA256.fullmatch(code_identity) is None:
+        raise ValueError("command detector code identity is invalid")
+    if type(wrapper_identity) is not str or _SHA256.fullmatch(wrapper_identity) is None:
+        raise ValueError("command detector wrapper identity is invalid")
+
+    command = object.__getattribute__(instance, "_command")
+    contract = object.__getattribute__(instance, "_contract")
+    config = object.__getattribute__(instance, "_config")
+    timeout = object.__getattribute__(instance, "_timeout_seconds")
+    max_stdout = object.__getattribute__(instance, "_max_stdout_bytes")
+    max_stderr = object.__getattribute__(instance, "_max_stderr_bytes")
+    threshold = object.__getattribute__(instance, "threshold")
+    expected_contract = _contract_from_manifest(capability)
+    if (
+        type(command) is not tuple
+        or type(contract) is not type(expected_contract)
+        or contract != expected_contract
+    ):
+        raise ValueError("command detector contract is not bound to its manifest")
+    if type(config) is not DewatermarkConfig:
+        raise TypeError("command detector configuration is invalid")
+    if type(threshold) is not float or threshold != contract.threshold:
+        raise ValueError("command detector threshold is not bound to its contract")
+    if type(timeout) is not float or type(max_stdout) is not int or type(max_stderr) is not int:
+        raise TypeError("command detector execution limits are invalid")
+    _validate_limits(timeout, max_stdout, max_stderr)
+    if (
+        type(config.allow_remote_processing) is not bool
+        or type(config.allow_model_download) is not bool
+        or type(config.request_timeout) is not int
+        or type(config.max_input_chars) is not int
+    ):
+        raise TypeError("command detector runtime policy is invalid")
+
+    fields = (
+        "command-detector-state-v1",
+        manifest_sha256(capability),
+        wrapper_identity,
+        code_identity,
+        str(len(command)),
+        float(timeout).hex(),
+        str(max_stdout),
+        str(max_stderr),
+        "1" if config.allow_remote_processing else "0",
+        "1" if config.allow_model_download else "0",
+        str(config.request_timeout),
+        str(config.max_input_chars),
+    )
+    return hashlib.sha256("\0".join(fields).encode("ascii")).hexdigest()
+
+
 def _threshold_decision(score: float, threshold: float, operator: str) -> bool:
     if operator == ">":
         return score > threshold
@@ -608,38 +676,63 @@ class DetectorSession:
             if type(configuration) is str and _PUBLIC_IDENTIFIER.fullmatch(configuration)
             else manifest_sha256(declared)
         )
-        identity = extension_identity(instance, "detector")
-        implementation = str(identity["implementation_sha256"])
-        code_identity = implementation
         from .command_detector import CommandDetector, _contract_from_manifest
 
-        command_identity_error: Optional[str] = None
         if isinstance(instance, CommandDetector):
+            wrapper_identity = implementation_sha256(CommandDetector)
+            implementation = wrapper_identity
+            code_identity = wrapper_identity
+            static_state = hashlib.sha256(
+                f"command-detector-unverifiable-v1\0{manifest_sha256(declared)}".encode("ascii")
+            ).hexdigest()
             if type(instance) is not CommandDetector:
                 # A subclass can change decisions outside the pinned command.
                 # Do not let cosmetic wrapper classes manufacture independence.
-                command_identity_error = "command_detector_identity_unverifiable"
-            elif type(instance._contract.implementation_sha256) is str and _SHA256.fullmatch(
-                instance._contract.implementation_sha256
-            ):
-                implementation = instance._contract.implementation_sha256
-            else:
-                command_identity_error = "command_detector_implementation_unbound"
+                return (
+                    declared.identifier,
+                    configuration_key,
+                    implementation,
+                    static_state,
+                    id(instance),
+                    "command_detector_identity_unverifiable",
+                    code_identity,
+                )
+
+            command_identity_error: Optional[str] = None
             try:
-                if object.__getattribute__(instance, "_contract") != _contract_from_manifest(
-                    declared
+                expected_contract = _contract_from_manifest(declared)
+                contract = object.__getattribute__(instance, "_contract")
+                if type(contract) is not type(expected_contract) or contract != expected_contract:
+                    raise ValueError("command detector contract drifted")
+                implementation_commitment = object.__getattribute__(
+                    contract, "implementation_sha256"
+                )
+                if type(implementation_commitment) is str and _SHA256.fullmatch(
+                    implementation_commitment
                 ):
-                    command_identity_error = "command_detector_identity_unverifiable"
+                    implementation = implementation_commitment
+                else:
+                    command_identity_error = "command_detector_implementation_unbound"
+                command_code = command_code_identity_sha256(
+                    object.__getattribute__(instance, "_command")
+                )
+                if type(command_code) is not str or _SHA256.fullmatch(command_code) is None:
+                    raise ValueError("command detector code identity is unverifiable")
+                code_identity = command_code
+                static_state = _command_detector_state_sha256(
+                    instance,
+                    declared,
+                    command_code,
+                    wrapper_identity,
+                )
             except Exception:
                 command_identity_error = "command_detector_identity_unverifiable"
-            command_code = command_code_identity_sha256(
-                object.__getattribute__(instance, "_command")
-            )
-            if type(command_code) is str and _SHA256.fullmatch(command_code):
-                code_identity = command_code
-            else:
-                command_identity_error = "command_detector_identity_unverifiable"
         else:
+            identity = extension_identity(instance, "detector")
+            implementation = str(identity["implementation_sha256"])
+            code_identity = implementation
+            static_state = str(identity["static_state_sha256"])
+            command_identity_error = None
             try:
                 state = object.__getattribute__(instance, "__dict__")
             except Exception:
@@ -667,7 +760,7 @@ class DetectorSession:
             declared.identifier,
             configuration_key,
             implementation,
-            str(identity["static_state_sha256"]),
+            static_state,
             id(instance),
             command_identity_error,
             code_identity,
@@ -797,12 +890,24 @@ class DetectorSession:
         from .command_detector import CommandDetector
 
         behavior_identity = implementation_sha256(instance)
-        if isinstance(instance, CommandDetector):
+        if type(instance) is CommandDetector:
             code_identity = command_code_identity_sha256(
                 object.__getattribute__(instance, "_command")
             )
             if type(code_identity) is str and _SHA256.fullmatch(code_identity):
-                behavior_identity = _digest(f"{code_identity}\0{implementation_sha256(instance)}")
+                try:
+                    command_state = _command_detector_state_sha256(
+                        instance,
+                        declared,
+                        code_identity,
+                        behavior_identity,
+                    )
+                except Exception:
+                    behavior_identity = _digest(
+                        f"command-detector-policy-unverifiable-v1\0{behavior_identity}"
+                    )
+                else:
+                    behavior_identity = _digest(f"{command_state}\0{behavior_identity}")
         return _digest(f"{policy}\0{behavior_identity}")
 
     def _score_policy_sha256(self, target: _Target) -> str:
