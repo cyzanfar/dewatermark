@@ -8,6 +8,6 @@ authors:
 repository-code: "https://github.com/cyzanfar/text-watermark-remover"
 url: "https://pypi.org/project/dewatermark/"
 license: MIT
-version: 0.7.0
-date-released: 2026-08-18
+version: 0.8.0
+date-released: 2026-08-20
 keywords: [text watermark remover, LLM watermark, Unicode steganography]

@@ -119,6 +119,20 @@ from .pipeline import RemovalResult
 from .pipeline import aremove as _aremove
 from .pipeline import remove as _remove
 from .pipeline import remove_many as _remove_many
+from .profiles import (
+    MITIGATION_PROFILE_SCHEMA_VERSION,
+    MitigationProfile,
+    MitigationProfileConsentError,
+    MitigationProfileError,
+    build_mitigation_profile,
+    inspect_mitigation_profile,
+    load_mitigation_profile,
+    mitigate_with_profile,
+    mitigation_profile_sha256,
+    quality_policy_manifest,
+    quality_policy_sha256,
+    validate_mitigation_profile,
+)
 from .providers import (
     detector_errors,
     detector_manifest,
@@ -195,13 +209,19 @@ from .schemas import (
     detector_capability_schema,
     evidence_receipt_schema,
     localization_result_schema,
+    mitigation_profile_schema,
     mitigation_result_schema,
     openapi_document,
     public_schema,
     removal_result_schema,
 )
 from .scoring import ScorerUnavailable, clear_cache, self_information, surrogate_score
-from .strategies import RegisteredProviderStrategy, registered_strategy
+from .strategies import (
+    ContextAwareMinimalEditStrategy,
+    RegisteredProviderStrategy,
+    context_aware_strategy,
+    registered_strategy,
+)
 from .unicode import (
     UNICODE_POLICY_SHA256,
     UNICODE_POLICY_VERSION,
@@ -238,6 +258,7 @@ __all__ = [
     "CommandStrategyFactory",
     "ConfigurationError",
     "ConsentRequiredError",
+    "ContextAwareMinimalEditStrategy",
     "CitationGroundingGate",
     "DetectionEvidence",
     "DetectionStatus",
@@ -263,6 +284,10 @@ __all__ = [
     "LocalizationReport",
     "MitigationReceipt",
     "MitigationResult",
+    "MitigationProfile",
+    "MitigationProfileConsentError",
+    "MitigationProfileError",
+    "MITIGATION_PROFILE_SCHEMA_VERSION",
     "RemovalMode",
     "RemovalReport",
     "RemovalResult",
@@ -328,6 +353,7 @@ __all__ = [
     "command_strategy_schema",
     "configure",
     "conform_reference_detectors",
+    "context_aware_strategy",
     "create_plan",
     "detector_errors",
     "detector_configuration_sha256",
@@ -356,7 +382,16 @@ __all__ = [
     "materialize_adapter_pack",
     "materialize_agent_skill",
     "mitigate",
+    "mitigate_with_profile",
+    "mitigation_profile_sha256",
+    "build_mitigation_profile",
+    "inspect_mitigation_profile",
+    "load_mitigation_profile",
+    "validate_mitigation_profile",
+    "quality_policy_manifest",
+    "quality_policy_sha256",
     "mitigation_result_schema",
+    "mitigation_profile_schema",
     "openapi_document",
     "plan",
     "path_is_selected",

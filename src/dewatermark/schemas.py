@@ -12,6 +12,7 @@ _SCHEMA_FILES = {
     "evidence-receipt": "evidence-receipt-v1.json",
     "localization-result": "localization-result-v1.json",
     "mitigation-result": "mitigation-result-v1.json",
+    "mitigation-profile": "mitigation-profile-v1.json",
     "detector-capability": "detector-capability-v1.json",
     "command-detector": "command-detector-protocol-v1.json",
     "command-strategy": "command-strategy-protocol-v1.json",
@@ -62,6 +63,10 @@ def localization_result_schema() -> dict[str, Any]:
 
 def mitigation_result_schema() -> dict[str, Any]:
     return public_schema("mitigation-result")
+
+
+def mitigation_profile_schema() -> dict[str, Any]:
+    return public_schema("mitigation-profile")
 
 
 def detector_capability_schema() -> dict[str, Any]:

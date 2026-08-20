@@ -34,7 +34,7 @@
         "description": "Open-source text watermark remover for Unicode artifacts with detector-backed evaluation of statistical LLM watermarks.",
         "codeRepository": "https://github.com/cyzanfar/text-watermark-remover",
         "programmingLanguage": ["Python", "JavaScript", "Java"],
-        "softwareVersion": "0.7.0",
+        "softwareVersion": "0.8.0",
         "license": "https://opensource.org/license/mit",
         "runtimePlatform": "Python 3.9+",
         "keywords": "text watermark remover, LLM watermark, Unicode security, AI agents"
@@ -64,7 +64,7 @@
           {
             "@type": "Question",
             "name": "Does this claim to remove Anthropic Claude watermarks?",
-            "acceptedAnswer": {"@type": "Answer", "text": "No. Anthropic confirms embedded marking for supported models but has not published the technical detector guidance needed for independent verification. The toolkit returns an unsupported detection outcome and records unsupported-pending-specification capability metadata."}
+            "acceptedAnswer": {"@type": "Answer", "text": "No. Anthropic identifies the scheme family as SynthID-Text but has not published the deployed configuration, keys, calibrated thresholds, or detector contract needed for independent verification. The toolkit returns an unsupported detection outcome and records unsupported-pending-specification capability metadata."}
           }
         ]
       }
@@ -84,7 +84,7 @@
     </nav>
   </header>
 
-  <p class="release-banner"><strong>Version 0.7.0 is available.</strong>
+  <p class="release-banner"><strong>Version 0.8.0 is available.</strong>
   Install the stable Python package from PyPI with the command below.</p>
 
   <main id="main">
@@ -208,8 +208,8 @@ dewatermark check . --format sarif \
         <a class="button" href="research.html">Read the research map</a>
       </div>
       <div class="boundary-list">
-        <p><strong>Claude:</strong> confirmed marking for supported models; public technical detector guidance is still forthcoming.</p>
-        <p><strong>SynthID Text:</strong> public reference research exists; a reference configuration is not proof about every production surface.</p>
+        <p><strong>Claude:</strong> the SynthID-Text family is disclosed; the deployed detector contract and configuration are still pending.</p>
+        <p><strong>SynthID Text:</strong> an operator-sealed public research adapter exists; it is not proof about any production surface.</p>
         <p><strong>Retrieval provenance:</strong> a provider-held copy cannot be removed from the submitted text.</p>
         <p><strong>Short text:</strong> many statistical tests must abstain when there are too few effective detector tokens.</p>
       </div>
@@ -220,7 +220,7 @@ dewatermark check . --format sarif \
       <h2 id="faq-title">What a trustworthy text watermark remover should say.</h2>
       <details><summary>Can this remove every AI text watermark?</summary><p>No. Unicode sanitation is deterministic for covered artifacts. Statistical support is detector-specific, and private or unknown schemes remain unsupported rather than being declared clean.</p></details>
       <details><summary>Does my pasted text leave the browser?</summary><p>No. The playground imports a dependency-free JavaScript sanitizer and performs every operation in the current tab. It has no upload endpoint.</p></details>
-      <details><summary>Does it remove an Anthropic Claude watermark?</summary><p>It makes no such claim. Anthropic has confirmed marking on supported newer models, while public technical detection details remain forthcoming. dewatermark therefore returns an <code>unsupported</code> detection outcome and records capability metadata status <code>unsupported_pending_spec</code>.</p></details>
+      <details><summary>Does it remove an Anthropic Claude watermark?</summary><p>It makes no such claim. Anthropic identifies the scheme family as SynthID-Text, but the deployed configuration, keys, calibrated thresholds, and detector contract are not public. dewatermark therefore returns an <code>unsupported</code> detection outcome and records capability metadata status <code>unsupported_pending_spec</code>.</p></details>
       <details><summary>Why use a detector after rewriting?</summary><p>A rewrite may alter wording without changing a detector decision—or may damage meaning. Verification requires a compatible detector plus semantic, factual, structural, and protected-span quality gates.</p></details>
     </section>
   </main>

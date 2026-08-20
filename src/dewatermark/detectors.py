@@ -40,9 +40,9 @@ _PUBLIC_EVIDENCE_DETAIL_KEYS = {
 }
 _GENERIC_UNSUPPORTED_REASON = "No public, independently usable detector is available."
 _ANTHROPIC_UNSUPPORTED_REASON = (
-    "Anthropic documents marking for supported models launched on or after "
-    "2026-08-02 but has not published the detector, keys, threshold, or "
-    "verification procedure."
+    "Anthropic describes its supported Claude marking as a version of SynthID-Text "
+    "but has not published the deployed configuration, keys, calibrated thresholds, "
+    "or detector contract."
 )
 _SYNTHID_UNSUPPORTED_REASON = (
     "Public SynthID-Text references do not provide Gemini production keys "
@@ -376,8 +376,11 @@ def builtin_detector_factories() -> dict[str, Any]:
         "anthropic-claude",
         "anthropic-claude",
         _ANTHROPIC_UNSUPPORTED_REASON,
-        source="https://support.claude.com/en/articles/16266773-how-claude-marks-ai-generated-content",
-        source_status="technical_detection_guidance_forthcoming",
+        source="https://www.anthropic.com/news/claude-text-watermark",
+        source_status="scheme_family_disclosed_detector_contract_pending",
+        scheme_family="synthid-text",
+        deployment_configuration_status="not_public",
+        detector_api_status="forthcoming",
     )
     synthid_production = _UnsupportedDetectorFactory(
         "synthid-production",

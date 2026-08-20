@@ -20,7 +20,7 @@
     "schema_version": { "const": "1.0" },
     "protocol_id": { "$ref": "#/$defs/publicId" },
     "classification": { "const": "real_protocol_preregistration_no_results" },
-    "watermark_family": { "const": "kgw" },
+    "watermark_family": { "enum": ["kgw", "synthid_text"] },
     "protocol_registry_sha256": { "$ref": "#/$defs/sha256" },
     "comparator_registry_sha256": { "$ref": "#/$defs/sha256" },
     "requested_fprs": {

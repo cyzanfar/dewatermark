@@ -329,6 +329,63 @@ def detector_identity(name: str) -> dict[str, Any] | None:
     raise ConfigurationError("unknown detector; call list_detectors() for available names")
 
 
+def detector_binding_identity(name: str) -> dict[str, Any] | None:
+    """Return the static detector identity used by mitigation profiles.
+
+    Exact command-detector factories need three commitments beyond the generic
+    Python extension identity: the manifest's externally reviewed
+    implementation digest, a semantic executable/script identity for held-out
+    distinctness, and an exact raw identity for drift. Computing those digests
+    reads only bounded public command code. It never constructs a detector,
+    starts a process, imports an unloaded entry point, or reads an
+    operator-managed secret argument.
+    """
+    key = _name(name, "detector")
+    registered = _registered_detector(key)
+    if registered is not None:
+        factory, capability, identity = registered
+    else:
+        builtin_factory = _builtin_detector_factories().get(key)
+        if builtin_factory is None:
+            if key in _detector_entries() or key in _detectors:
+                return None
+            raise ConfigurationError("unknown detector; call list_detectors() for available names")
+        factory = builtin_factory
+        capability = static_capability(factory, "detector")
+        with _lock:
+            next_revision = _detector_revisions.get(key, 0) + 1
+        identity = extension_identity(factory, "detector", revision=next_revision)
+
+    from .command_detector import CommandDetectorFactory, _contract_from_manifest
+    from .command_safety import command_code_identities_sha256
+
+    result = dict(identity)
+    if type(factory) is not CommandDetectorFactory:
+        return result
+    try:
+        contract = _contract_from_manifest(capability)
+        implementation = contract.implementation_sha256
+        command = object.__getattribute__(factory, "command")
+        command_code, command_code_raw = command_code_identities_sha256(command)
+    except Exception:
+        raise ConfigurationError(
+            "command detector assurance identity could not be established"
+        ) from None
+    if (
+        type(implementation) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", implementation) is None
+        or type(command_code) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", command_code) is None
+        or type(command_code_raw) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", command_code_raw) is None
+    ):
+        raise ConfigurationError("command detector assurance identity is incomplete")
+    result["external_implementation_sha256"] = implementation
+    result["command_code_sha256"] = command_code
+    result["command_code_raw_sha256"] = command_code_raw
+    return result
+
+
 def list_detectors() -> tuple[str, ...]:
     with _lock:
         registered = set(_detectors)

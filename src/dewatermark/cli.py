@@ -31,6 +31,11 @@ from .exceptions import DewatermarkError
 from .localization import localize
 from .models import SCHEMA_VERSION
 from .optimizer import SearchLimits, mitigate
+from .profiles import (
+    inspect_mitigation_profile,
+    load_mitigation_profile,
+    mitigate_with_profile,
+)
 from .reference_detectors import ReferenceScheme
 from .scanner import (
     baseline_fingerprints,
@@ -216,18 +221,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     mitigation.add_argument("text", nargs="?", help="text; omit to read stdin")
     mitigation.add_argument("--input", type=Path, help="read UTF-8 text from a file")
-    mitigation.add_argument("--detector", required=True, help="primary search detector")
+    mitigation.add_argument("--detector", help="primary search detector")
     mitigation.add_argument(
         "--verifier",
         action="append",
-        required=True,
         help="distinct calibrated verifier; repeat for more than one",
     )
     mitigation.add_argument(
         "--strategy",
         action="append",
-        required=True,
         help="registered transformer provider; repeat to search a portfolio",
+    )
+    mitigation.add_argument(
+        "--profile",
+        type=Path,
+        help="execute an exact operator-scoped mitigation profile instead of loose components",
     )
     mitigation.add_argument(
         "--consent",
@@ -243,12 +251,25 @@ def _parser() -> argparse.ArgumentParser:
         help="allow declared model acquisition",
     )
     mitigation.add_argument("--format", choices=("json", "text"), default="json")
-    mitigation.add_argument("--max-rounds", type=int, default=2)
-    mitigation.add_argument("--beam-width", type=int, default=4)
+    mitigation.add_argument("--max-rounds", type=int)
+    mitigation.add_argument("--beam-width", type=int)
     mitigation.add_argument("--max-candidates", type=int)
     mitigation.add_argument("--max-transform-calls", type=int)
     mitigation.add_argument("--max-detector-queries", type=int)
-    mitigation.add_argument("--max-verification-candidates", type=int, default=8)
+    mitigation.add_argument("--max-verification-candidates", type=int)
+    profiles = sub.add_parser(
+        "profiles",
+        help="inspect content-addressed mitigation profiles without loading components",
+    )
+    profile_sub = profiles.add_subparsers(dest="profile_command", required=True)
+    profile_inspect = profile_sub.add_parser(
+        "inspect", help="validate and print one public profile"
+    )
+    profile_inspect.add_argument("profile", type=Path)
+    profile_doctor = profile_sub.add_parser(
+        "doctor", help="check static component and quality-policy bindings"
+    )
+    profile_doctor.add_argument("profile", type=Path)
     sub.add_parser("capabilities", help="show installed features without network or model loading")
     skill = sub.add_parser(
         "skill",
@@ -310,6 +331,7 @@ def _parser() -> argparse.ArgumentParser:
             "command-strategy",
             "localization-result",
             "mitigation-result",
+            "mitigation-profile",
             "benchmark-evidence-bundle",
             "benchmark-comparator-registry",
             "benchmark-protocol-manifest",
@@ -557,37 +579,75 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 allow_remote_processing=bool(args.allow_network),
                 allow_model_download=bool(args.allow_model_download),
             )
-            max_candidates = (
-                args.max_candidates
-                if args.max_candidates is not None
-                else config.max_search_candidates
-            )
-            max_transform_calls = (
-                args.max_transform_calls if args.max_transform_calls is not None else max_candidates
-            )
-            limits = SearchLimits(
-                max_rounds=args.max_rounds,
-                beam_width=args.beam_width,
-                max_candidates=max_candidates,
-                max_transform_calls=max_transform_calls,
-                max_detector_queries=(
-                    args.max_detector_queries
-                    if args.max_detector_queries is not None
-                    else config.max_detector_queries
-                ),
-                max_candidate_characters=config.max_input_chars,
-                max_verification_candidates=args.max_verification_candidates,
-            )
             source_text = _read(args)
-            strategies = [registered_strategy(name, config) for name in args.strategy]
-            mitigation_result = mitigate(
-                source_text,
-                args.detector,
-                strategies,
-                verifier_detectors=args.verifier,
-                config=config,
-                limits=limits,
-            )
+            if args.profile is not None:
+                if (
+                    args.detector is not None
+                    or args.verifier
+                    or args.strategy
+                    or any(
+                        value is not None
+                        for value in (
+                            args.max_rounds,
+                            args.beam_width,
+                            args.max_candidates,
+                            args.max_transform_calls,
+                            args.max_detector_queries,
+                            args.max_verification_candidates,
+                        )
+                    )
+                ):
+                    raise _CliUsageError(
+                        "--profile cannot be combined with component or search-limit overrides"
+                    )
+                profile = load_mitigation_profile(args.profile)
+                mitigation_result = mitigate_with_profile(
+                    source_text,
+                    profile,
+                    consent=True,
+                    config=config,
+                )
+            else:
+                if args.detector is None or not args.verifier or not args.strategy:
+                    raise _CliUsageError(
+                        "mitigate requires --detector, --verifier, and --strategy without --profile"
+                    )
+                max_candidates = (
+                    args.max_candidates
+                    if args.max_candidates is not None
+                    else config.max_search_candidates
+                )
+                max_transform_calls = (
+                    args.max_transform_calls
+                    if args.max_transform_calls is not None
+                    else max_candidates
+                )
+                limits = SearchLimits(
+                    max_rounds=args.max_rounds if args.max_rounds is not None else 2,
+                    beam_width=args.beam_width if args.beam_width is not None else 4,
+                    max_candidates=max_candidates,
+                    max_transform_calls=max_transform_calls,
+                    max_detector_queries=(
+                        args.max_detector_queries
+                        if args.max_detector_queries is not None
+                        else config.max_detector_queries
+                    ),
+                    max_candidate_characters=config.max_input_chars,
+                    max_verification_candidates=(
+                        args.max_verification_candidates
+                        if args.max_verification_candidates is not None
+                        else 8
+                    ),
+                )
+                strategies = [registered_strategy(name, config) for name in args.strategy]
+                mitigation_result = mitigate(
+                    source_text,
+                    args.detector,
+                    strategies,
+                    verifier_detectors=args.verifier,
+                    config=config,
+                    limits=limits,
+                )
             _emit(
                 (
                     mitigation_result.cleaned_text
@@ -602,6 +662,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 or mitigation_result.reason_code == "source_not_detected"
                 else EXIT_PROCESSING
             )
+        if args.command == "profiles":
+            profile = load_mitigation_profile(args.profile)
+            if args.profile_command == "inspect":
+                _emit(profile.to_dict())
+                return EXIT_OK
+            profile_report = inspect_mitigation_profile(
+                profile,
+                config=DewatermarkConfig.from_env(),
+            )
+            _emit(profile_report)
+            return EXIT_OK if profile_report["static_bindings_ready"] else EXIT_PROCESSING
         if args.command == "capabilities":
             _emit(capabilities())
             return EXIT_OK

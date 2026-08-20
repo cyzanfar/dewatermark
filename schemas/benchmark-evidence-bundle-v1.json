@@ -125,6 +125,7 @@
         "classification": { "$ref": "#/$defs/publicToken" },
         "fixture": { "$ref": "#/$defs/publicToken" },
         "version": { "$ref": "#/$defs/publicToken" },
+        "watermark_family": { "enum": ["kgw", "synthid_text"] },
         "network_allowed": { "type": "boolean" },
         "model_download_allowed": { "type": "boolean" }
       },

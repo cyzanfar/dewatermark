@@ -20,7 +20,10 @@ from threading import RLock
 from types import CodeType, FunctionType, MemberDescriptorType
 from typing import Any, Iterable, Iterator, Mapping, Optional
 
-from .command_safety import _unsafe_argument_value
+from .command_safety import (
+    _unsafe_argument_value,
+    public_command_identity_sha256,
+)
 from .exceptions import ConfigurationError
 from .models import CapabilityManifest
 
@@ -515,6 +518,54 @@ def _instance_state(
                 _state_digest(value, digest, seen, budget, depth + 1)
 
 
+def _command_detector_factory_state(
+    value: Any,
+    digest: Any,
+    seen: set[int],
+    budget: list[int],
+    depth: int,
+) -> bool:
+    """Hash the exact host factory without private argv or code-path values."""
+    value_type = type(value)
+    if (
+        type.__getattribute__(value_type, "__module__") != "dewatermark.command_detector"
+        or type.__getattribute__(value_type, "__name__") != "CommandDetectorFactory"
+    ):
+        return False
+    # Lazy import keeps the generic extension module independent during normal
+    # import initialization. Exact type checking prevents a third-party object
+    # from opting itself into this narrower, host-reviewed projection.
+    from .command_detector import CommandDetectorFactory
+
+    if type(value) is not CommandDetectorFactory:
+        return False
+    command = object.__getattribute__(value, "command")
+    capability = object.__getattribute__(value, "capability")
+    timeout = object.__getattribute__(value, "timeout_seconds")
+    max_stdout = object.__getattribute__(value, "max_stdout_bytes")
+    max_stderr = object.__getattribute__(value, "max_stderr_bytes")
+    if type(command) is not tuple or type(capability) is not CapabilityManifest:
+        raise ConfigurationError("command detector factory state is invalid")
+    if (
+        isinstance(timeout, bool)
+        or type(timeout) not in (int, float)
+        or type(max_stdout) is not int
+        or type(max_stderr) is not int
+    ):
+        raise ConfigurationError("command detector factory limits are invalid")
+    public_command = public_command_identity_sha256(command)
+    _digest_scalar(digest, b"command-detector-factory-state", b"v1")
+    _state_digest(capability, digest, seen, budget, depth + 1)
+    _digest_scalar(digest, b"public-command-sha256", public_command.encode("ascii"))
+    # Code paths are excluded here. The profile and runtime assurance paths
+    # bind the semantic and exact raw content digests separately, without
+    # turning a local path into a guessable public fingerprint.
+    _digest_scalar(digest, b"timeout", float(timeout).hex().encode("ascii"))
+    _digest_scalar(digest, b"max-stdout", str(max_stdout).encode("ascii"))
+    _digest_scalar(digest, b"max-stderr", str(max_stderr).encode("ascii"))
+    return True
+
+
 def _state_digest(
     value: Any,
     digest: Any,
@@ -556,6 +607,8 @@ def _state_digest(
         return
     seen.add(identity)
     try:
+        if _command_detector_factory_state(value, digest, seen, budget, depth):
+            return
         if value_type in (list, tuple):
             _digest_scalar(digest, value_type.__name__.encode("ascii"), str(len(value)).encode())
             for item in value:

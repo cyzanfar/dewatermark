@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from types import SimpleNamespace
 
@@ -24,8 +25,8 @@ from evidence import (
     write_bundle,
 )
 from jsonschema import Draft202012Validator
-from observations import finalize_observation_set
-from protocol import load_protocol_registry
+from observations import aggregate_observation_set, finalize_observation_set
+from protocol import load_protocol_registry, validate_sample_registry
 from public_codes import COVERAGE_COMPLETE_REASON_CODES_BY_AREA
 from reference_run import (
     reference_observation_set,
@@ -46,6 +47,15 @@ def _write_public_json(path, value):
     )
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO creation requires POSIX")
+def test_bounded_evidence_reader_rejects_fifo_without_blocking(tmp_path):
+    path = tmp_path / "evidence.json"
+    os.mkfifo(path)
+
+    with pytest.raises(EvidenceValidationError, match="bounded regular file"):
+        evidence._read_bounded_file(path, 1024, "not a bounded regular file")
+
+
 def _write_comparator_bound_reference(directory):
     samples = reference_sample_registry()
     observations = reference_observation_set(samples)
@@ -61,6 +71,77 @@ def _write_comparator_bound_reference(directory):
     _write_public_json(observation_path, observations)
     _write_public_json(comparator_path, comparator)
     return sample_path, observation_path, comparator_path
+
+
+def _write_v070_real_aggregate(directory):
+    """Build the real-run 1.1 shape emitted before family binding existed."""
+    samples = reference_sample_registry()
+    samples.pop("registry_classification")
+    for sample in samples["samples"]:
+        metadata = sample["metadata"]
+        if "generator_id" in metadata:
+            metadata["generator_id"] = "operator-reference-generator"
+    observations = reference_observation_set(samples)
+    manifest = observations["run_manifest"]
+    manifest["classification"] = "detector_scoped_real_adapter_benchmark"
+    manifest.pop("fixture_sha256")
+    assert manifest["aggregation_contract_version"] == "1.1"
+    assert "watermark_family" not in manifest
+    for index, detector in enumerate(observations["detectors"]):
+        detector["manifest"] = {
+            "family": "kgw",
+            "implementation": f"operator-reference-{index}",
+            "implementation_version": "1",
+            "independent": True,
+            "configuration_sha256": _digest(f"real-config-{index}"),
+            "golden_conformance": {"passed": True},
+        }
+    observations = finalize_observation_set(observations)
+    aggregate = aggregate_observation_set(
+        observations,
+        samples,
+        bootstrap_replicates=50,
+        bootstrap_seed=0,
+    )
+    sample_path = directory / "v070-sample-registry.json"
+    observation_path = directory / "v070-observations.json"
+    _write_public_json(sample_path, samples)
+    _write_public_json(observation_path, observations)
+    coverage = dict(aggregate["coverage"])
+    coverage["artifact_handling"] = {
+        "state": "complete",
+        "reason": "source_artifacts_bound_by_digest",
+    }
+    public_results = dict(aggregate)
+    public_results["score_tables"] = {
+        name: {"sha256": table["sha256"], "records": len(table["records"])}
+        for name, table in aggregate["score_tables"].items()
+    }
+    public_results["aggregate_sha256"] = results_identity(public_results)
+    sample_report = validate_sample_registry(samples)
+    return create_bundle(
+        purpose="exploratory",
+        manifest=manifest,
+        protocol_coverage=coverage,
+        results=public_results,
+        resource_telemetry=aggregate["resource_telemetry"],
+        reproduction=observations["reproduction"],
+        artifacts=[
+            artifact_descriptor(sample_path, root=directory),
+            artifact_descriptor(observation_path, root=directory),
+        ],
+        sample_registry_sha256=sample_report["sample_registry_sha256"],
+        sample_count=sample_report["sample_count"],
+    )
+
+
+def test_v070_real_aggregate_without_family_remains_verified(tmp_path):
+    bundle = _write_v070_real_aggregate(tmp_path)
+
+    report = validate_bundle(bundle, artifact_root=tmp_path)
+
+    assert report["valid"] is True
+    assert report["aggregate_verified"] is True
 
 
 def test_reference_bundle_is_deterministic_content_addressed_and_non_claiming(tmp_path):

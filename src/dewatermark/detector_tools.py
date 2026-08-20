@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, Sequence
 
+from .capability_projection import public_detector_capability
 from .models import CapabilityManifest
 from .providers import detector_errors, detector_manifest, list_detectors
 from .reference_detectors import (
@@ -42,7 +43,7 @@ class DetectorInventoryEntry:
             "status": self.status,
         }
         if self.capability is not None:
-            value["capability"] = self.capability.to_dict()
+            value["capability"] = public_detector_capability(self.capability)
         return value
 
 

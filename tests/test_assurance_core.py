@@ -400,7 +400,9 @@ def test_vendor_manifests_are_explicitly_unsupported_and_static():
     anthropic = detector_manifest("anthropic-claude")
     assert anthropic is not None
     assert anthropic.metadata["status"] == "unsupported_pending_spec"
-    assert "support.claude.com" in anthropic.metadata["source"]
+    assert "anthropic.com" in anthropic.metadata["source"]
+    assert anthropic.metadata["scheme_family"] == "synthid-text"
+    assert anthropic.metadata["deployment_configuration_status"] == "not_public"
     synthid = detector_manifest("synthid-production")
     assert synthid is not None
     assert synthid.metadata["source_status"] == "reference_implementation_only"
@@ -485,6 +487,47 @@ def test_planning_does_not_import_detector_entry_points(monkeypatch):
     with pytest.raises(ValueError, match="static capability manifest"):
         create_plan("private text", "sanitize", detector="untrusted", config=OFFLINE)
     assert invoked == []
+
+
+def test_legacy_command_attribution_extensions_are_not_published_by_plans():
+    private = "confidential-merger-codename-zephyr"
+
+    class LegacyDetector:
+        capability = CapabilityManifest(
+            identifier="legacy-command-attribution-collision",
+            kind="detector",
+            schemes=("test",),
+            metadata={
+                "command_protocol_version": "1.1",
+                "configuration_sha256": "1" * 64,
+                "attribution_kind": "token_character_spans",
+                "maximum_attributions": private,
+            },
+        )
+
+    register_detector("legacy-command-attribution-collision", LegacyDetector)
+    try:
+        planned = create_plan(
+            "private text",
+            "sanitize",
+            detector="legacy-command-attribution-collision",
+            config=OFFLINE,
+        )
+        capability_report = dewatermark.capabilities(OFFLINE)
+    finally:
+        unregister_detector("legacy-command-attribution-collision")
+    metadata = planned["policy"]["config"]["detector"]["metadata"]
+    assert "attribution_kind" not in metadata
+    assert "maximum_attributions" not in metadata
+    assert private not in json.dumps(planned)
+    legacy_report = next(
+        item
+        for item in capability_report["detector_capabilities"]
+        if item["registered_name"] == "legacy-command-attribution-collision"
+    )
+    assert "attribution_kind" not in legacy_report["metadata"]
+    assert "maximum_attributions" not in legacy_report["metadata"]
+    assert private not in json.dumps(capability_report)
 
 
 def test_failed_detector_receipt_does_not_mix_unicode_evidence_or_error_text():

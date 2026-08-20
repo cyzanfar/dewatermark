@@ -1,0 +1,19 @@
+{
+  "byteorder": "little",
+  "case_count": 5,
+  "fixture_ids_sha256": "d5589b15d8bbb0fe6e36442832ad5341a53faea08fb2cca6aaa81deba89a5c41",
+  "passed": true,
+  "portable_report_sha256": "290580ec8f0c30b34101c7e1274bd421055833ba3a03fa51e6d4eae4bb59f9b6",
+  "report_sha256": "99f4bca30757b791063a0413eca67cdf5bc69915c3871333eb386b531a7c4b06",
+  "schema_version": "1.0",
+  "scope": "g_values_and_repetition_eos_masks",
+  "source_files_sha256": {
+    "src/synthid_text/detector_mean.py": "584f12aa376e9106e6e6d4dd8bf3d5572c04996c844ffddeff37e1a1a15680f9",
+    "src/synthid_text/hashing_function.py": "6900000b03d6275347396d495d1118c64a16537a64c05fdec0868b623d1a34ab",
+    "src/synthid_text/logits_processing.py": "88bd1c20e2fea72356980548fc4cfa82c2ca1a2059ecb2deb1e3efa38be76294"
+  },
+  "torch_version": "2.4.0",
+  "transformers_version": "4.43.3",
+  "upstream_revision": "addb4a158143c7c6851a1308f78b89fceed59683",
+  "vectors_sha256": "98e13668748976a8bc8885d9551202987ef6b3f336782a17dc7d2515825fe920"
+}

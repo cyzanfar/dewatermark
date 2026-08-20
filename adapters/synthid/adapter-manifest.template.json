@@ -1,37 +1,52 @@
 {
   "adapter_protocol_version": "1.0",
+  "available_commands": [
+    "conformance.py",
+    "operator_adapter.py",
+    "seal_operator.py",
+    "upstream_conformance.py"
+  ],
   "calibrated": false,
+  "command_protocol_version": "1.2",
   "configuration_sha256": null,
-  "description": "Pinned integration template only; not a validated detector and not Gemini production support.",
+  "description": "Executable sealed research adapter for an operator-controlled configuration of the pinned public SynthID Text scoring formulas; not vendor production detection.",
   "golden_conformance": {
-    "passed": false,
-    "reason": "official-key/configuration-specific vectors and calibration evidence are required"
+    "case_count": 6,
+    "passed": true,
+    "scope": "public synthetic token-ID hashing, repetition/EOS masking, mean, weighted-mean, and character-attribution semantics",
+    "upstream_record_sha256": "99f4bca30757b791063a0413eca67cdf5bc69915c3871333eb386b531a7c4b06",
+    "vectors_sha256": "98e13668748976a8bc8885d9551202987ef6b3f336782a17dc7d2515825fe920"
   },
-  "identifier": "operator-required/synthid-text-reference",
+  "identifier": "operator-required/synthid-text-public-reference",
   "independent": false,
-  "model_revision": null,
   "production_detection": false,
   "production_keys_available": false,
   "repository": "https://github.com/google-deepmind/synthid-text",
   "repository_license": "Apache-2.0",
   "repository_revision": "addb4a158143c7c6851a1308f78b89fceed59683",
   "required_configuration": {
-    "context_history_size": null,
-    "detector_type": null,
-    "keys_fingerprint": null,
-    "ngram_len": null,
-    "sampling_table_seed_fingerprint": null,
-    "sampling_table_size": null,
-    "thresholds_by_effective_length": null,
-    "tokenizer_revision": null,
-    "watermarking_depth": null
+    "context_history_size": "positive integer",
+    "detector_type": "mean or weighted_mean",
+    "eos_token_id": "local tokenizer EOS token ID",
+    "generation_parameters": "temperature, top-k, apply-top-k, num-leaves, and first-ngram behavior",
+    "key_id": "opaque operator label; never key-derived",
+    "scheme": "exactly synthid-text/public-reference-v1",
+    "secret_binding": "owner-only private binding output created by the sealer",
+    "text_serialization": "decode without skipping special tokens or cleaning spaces, then UTF-8 text is re-tokenized",
+    "maximum_attributions": "integer from 1 through 512",
+    "ngram_len": "integer from 2 through 64",
+    "supported_effective_length_interval": "one closed interval per detector identity",
+    "threshold": "one fixed operator threshold",
+    "tokenizer_revision": "operator public revision label",
+    "watermarking_depth": "private key-list length",
+    "weights": "empty for mean; exact public vector for weighted_mean"
   },
   "source_files_sha256": {
     "src/synthid_text/detector_mean.py": "584f12aa376e9106e6e6d4dd8bf3d5572c04996c844ffddeff37e1a1a15680f9",
     "src/synthid_text/hashing_function.py": "6900000b03d6275347396d495d1118c64a16537a64c05fdec0868b623d1a34ab",
     "src/synthid_text/logits_processing.py": "88bd1c20e2fea72356980548fc4cfa82c2ca1a2059ecb2deb1e3efa38be76294"
   },
-  "status": "template_pending_conformance",
+  "status": "operator_sealable_research_pack",
   "tokenizer_revision": null,
   "vendor_equivalent": false
 }

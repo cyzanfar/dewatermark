@@ -5,15 +5,19 @@ matched marked and unmarked text, applies every frozen comparison method, runs
 the primary and cross-detectors, checks quality and task success, and writes a
 strict evidence bundle.
 
-New runs set `aggregation_contract_version: "1.1"` in the public run manifest.
-That contract binds bootstrap settings and any declared comparator registry;
-`verify` exactly reaggregates the bound observations and reports
-`aggregate_verified: true`. Legacy unmarked v1 bundles may remain structurally
-and content-address valid, but report `aggregate_verified: false` and do not
-establish a semantically verified aggregate.
+New real-adapter runs set `aggregation_contract_version: "1.2"` in the public
+run manifest. It adds an exact watermark-family binding to the 1.1 bootstrap,
+comparator, sample, observation, and result graph. `verify` exactly
+reaggregates both the v0.7 1.1 contract and the family-bound 1.2 contract and
+reports `aggregate_verified: true`. Unmarked legacy v1 bundles may remain
+structurally and content-address valid, but report `aggregate_verified: false`
+and do not establish a semantically verified aggregate.
 
-The checked-in [KGW protocol](protocols/kgw-v1.json) is a real experiment
-preregistration, not a result. The
+The checked-in [KGW](protocols/kgw-v1.json) and
+[SynthID Text](protocols/synthid-v1.json) protocols are real experiment
+preregistrations, not results. Select the one matching the detector family in
+the private run configuration; neither file is evidence that the named method
+succeeds. The
 [comparator registry](comparator-registry-v1.json) freezes these conditions
 before execution:
 
@@ -35,7 +39,7 @@ results are known.
 ## Files you provide
 
 The local run config follows
-[`benchmark-run-config-v1.json`](https://github.com/cyzanfar/text-watermark-remover/blob/v0.7.0/schemas/benchmark-run-config-v1.json). It names one generator/primary-detector
+[`benchmark-run-config-v1.json`](https://github.com/cyzanfar/text-watermark-remover/blob/v0.8.0/schemas/benchmark-run-config-v1.json). It names one generator/primary-detector
 adapter, at least one cross-detector, four transform adapters, one quality
 checker, and one task checker. Adapter entries use this shape:
 
@@ -82,6 +86,13 @@ to generation and detection, requires the response to echo it exactly, and
 never writes the slot—or a hash or commitment derived from it—to a checkpoint
 or evidence artifact. Keep the config private.
 
+The run-config schema deliberately rejects a `mitigation_profile_core_sha256`
+field. This runner does not load or execute mitigation profiles and cannot
+derive a trustworthy mapping from an arbitrary digest to the adapters,
+strategies, quality policy, and limits used for a run. Generic benchmark
+evidence remains independently verifiable, but profile v1 records only its
+preregistered protocol digest and cannot attach a result bundle.
+
 `execution_budget` is required and applies to the whole run, including every
 resume:
 
@@ -110,8 +121,8 @@ completion record.
 `--bootstrap-seed` accepts exact integers from 0 through 2^63 - 1. These limits
 combine with a 5,000,000 row-replicate-metric aggregation ceiling to keep all
 post-adapter statistical work bounded. Lower the replicate count or shard a
-larger frozen matrix. Aggregation contract 1.1 reserves `::` inside detector
-and condition identifiers so public group keys cannot collide.
+larger frozen matrix. Strict aggregation contracts 1.1 and 1.2 reserve `::`
+inside detector and condition identifiers so public group keys cannot collide.
 
 ## Adapter requests
 
@@ -136,7 +147,7 @@ The runner also sends:
 
 An accepted transform returns `state: "accepted"` and `candidate_text`. A
 transform may instead return `failed` or `abstained`. Adapter-supplied error
-labels are ignored: aggregation-contract 1.1 artifacts contain only the
+labels are ignored: strict 1.1 and 1.2 aggregation artifacts contain only the
 runner's closed, content-free host failure codes. A checker returns
 `state: "completed"` and a Boolean `passed`.
 Every network-capable response must include auditable telemetry:
@@ -157,9 +168,10 @@ then factual consequences of the enforced policy boundary.
 
 ```bash
 dewatermark-evidence run \
+  --protocol-manifest protocols/synthid-v1.json \
   --run-config private-run-config.json \
   --input-corpus private-input-corpus.json \
-  --output-directory evidence/kgw-run
+  --output-directory evidence/synthid-run
 ```
 
 Add `--allow-network` only when a sidecar requires it. A model download also
@@ -200,10 +212,11 @@ write cleanup removes only a temporary file created by the current process.
 
 ## What still requires real compute and data
 
-The repository intentionally contains no claimed KGW performance result. A
-publishable run still needs licensed human controls, prompts covering the full
-task × language × detector-length matrix, split-disjoint KGW keys, pinned real
-generator and detector implementations, and enough independent null clusters.
+The repository intentionally contains no claimed KGW or SynthID performance
+result. A publishable run still needs licensed human controls, prompts covering
+the full task × language × detector-length matrix, split-disjoint private keys,
+pinned real generator and detector implementations, and enough independent
+null clusters.
 At 0.1% FPR, 1,000 calibration and 1,000 held-out null clusters are only the
 minimum for an empirical estimate; the harness recommends 20,000 of each for a
 less fragile tail estimate. Blinded human review and independent replication

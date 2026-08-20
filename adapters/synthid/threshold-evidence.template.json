@@ -1,0 +1,11 @@
+{
+  "detector_type": "mean",
+  "empirical_calibration": false,
+  "evidence_id": "00000000000000000000000000000000",
+  "maximum_effective_tokens": 4096,
+  "minimum_effective_tokens": 32,
+  "schema_version": "1.0",
+  "score": "mean_g_value",
+  "threshold": 0.6,
+  "threshold_operator": ">"
+}

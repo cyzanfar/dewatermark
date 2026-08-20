@@ -199,15 +199,23 @@ def test_kgw_adapter_uses_pinned_upstream_strict_threshold_edge(monkeypatch):
     assert response["status"] == "not_detected"
 
 
-def test_synthid_pack_is_explicitly_an_incomplete_nonproduction_template():
+def test_synthid_pack_is_executable_only_for_operator_sealed_research_targets():
     manifest = json.loads(
         (ROOT / "adapters" / "synthid" / "adapter-manifest.template.json").read_text(
             encoding="utf-8"
         )
     )
     assert manifest["repository_revision"] == "addb4a158143c7c6851a1308f78b89fceed59683"
-    assert manifest["status"] == "template_pending_conformance"
-    assert manifest["golden_conformance"]["passed"] is False
+    assert manifest["status"] == "operator_sealable_research_pack"
+    assert manifest["golden_conformance"]["passed"] is True
+    assert set(manifest["available_commands"]) == {
+        "conformance.py",
+        "operator_adapter.py",
+        "seal_operator.py",
+        "upstream_conformance.py",
+    }
+    assert "sampling_table" not in json.dumps(manifest)
+    assert manifest["calibrated"] is False
     assert manifest["independent"] is False
     assert manifest["production_keys_available"] is False
     assert manifest["production_detection"] is False
@@ -222,6 +230,20 @@ def test_pack_api_lists_reads_and_materializes_without_overwrite(tmp_path):
     assert listed["unigram"]["production_detection"] is False
     assert adapter_pack_manifest("kgw")["metadata"]["source_revision"]
     assert adapter_pack_manifest("unigram")["metadata"]["source_revision"]
+
+    synthid_destination = tmp_path / "synthid-pack"
+    synthid_created = materialize_adapter_pack("synthid", synthid_destination)
+    assert {path.name for path in synthid_created} == {
+        "README.md",
+        "adapter-manifest.template.json",
+        "conformance.py",
+        "fixture-cases.json",
+        "operator_adapter.py",
+        "seal_operator.py",
+        "threshold-evidence.template.json",
+        "upstream-conformance-record.json",
+        "upstream_conformance.py",
+    }
 
     destination = tmp_path / "kgw-pack"
     created = materialize_adapter_pack("kgw", destination)

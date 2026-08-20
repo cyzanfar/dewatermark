@@ -556,12 +556,28 @@ def test_execution_registries_validate_against_checked_in_schemas():
             repository / "schemas" / "benchmark-protocol-manifest-v1.json",
             repository / "eval" / "protocols" / "kgw-v1.json",
         ),
+        (
+            repository / "schemas" / "benchmark-protocol-manifest-v1.json",
+            repository / "eval" / "protocols" / "synthid-v1.json",
+        ),
     )
     for schema_path, value_path in pairs:
         schema = json.loads(schema_path.read_text())
         value = json.loads(value_path.read_text())
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema).validate(value)
+
+
+def test_synthid_protocol_uses_the_same_frozen_execution_contract():
+    repository = Path(__file__).resolve().parents[1]
+    manifest = benchmark_run_module._load_protocol_manifest(
+        repository / "eval" / "protocols" / "synthid-v1.json",
+        load_comparator_registry(),
+    )
+
+    assert manifest["watermark_family"] == "synthid_text"
+    assert manifest["classification"] == "real_protocol_preregistration_no_results"
+    assert manifest["execution_requirements"]["cross_detector_required"] is True
 
 
 @pytest.mark.parametrize("section", ["analysis", "execution_requirements"])
@@ -625,9 +641,22 @@ def test_one_command_runs_adapter_matrix_and_emits_strict_content_free_bundle(
     config_path = tmp_path / "run-config.json"
     _write(config_path, config)
     repository = Path(__file__).resolve().parents[1]
-    Draft202012Validator(
-        json.loads((repository / "schemas" / "benchmark-run-config-v1.json").read_text())
-    ).validate(config)
+    run_config_schema = json.loads(
+        (repository / "schemas" / "benchmark-run-config-v1.json").read_text()
+    )
+    Draft202012Validator(run_config_schema).validate(config)
+
+    unvalidated_profile_link = {**config, "mitigation_profile_core_sha256": "a" * 64}
+    unvalidated_profile_link_path = tmp_path / "unvalidated-profile-link-run-config.json"
+    _write(unvalidated_profile_link_path, unvalidated_profile_link)
+    assert not Draft202012Validator(run_config_schema).is_valid(unvalidated_profile_link)
+    with pytest.raises(BenchmarkRunError, match="fields do not match"):
+        benchmark_run_module._load_run_config(
+            unvalidated_profile_link_path,
+            registry,
+            allow_network=False,
+            allow_model_download=False,
+        )
     records = []
     for split in ("calibration", "development", "final_test"):
         human = None
@@ -660,6 +689,25 @@ def test_one_command_runs_adapter_matrix_and_emits_strict_content_free_bundle(
     Draft202012Validator(
         json.loads((repository / "schemas" / "benchmark-input-corpus-v1.json").read_text())
     ).validate(corpus)
+    family_mismatch_config = {
+        **config,
+        "classification": "detector_scoped_real_adapter_benchmark",
+        "purpose": "frozen_evaluation",
+    }
+    family_mismatch_config_path = tmp_path / "family-mismatch-run-config.json"
+    _write(family_mismatch_config_path, family_mismatch_config)
+    Draft202012Validator(run_config_schema).validate(family_mismatch_config)
+    family_mismatch_output = tmp_path / "family-mismatch"
+    with pytest.raises(BenchmarkRunError, match="preregistered watermark family"):
+        run_benchmark(
+            protocol_manifest_path=repository / "eval" / "protocols" / "synthid-v1.json",
+            comparator_registry_path=repository / "eval" / "comparator-registry-v1.json",
+            run_config_path=family_mismatch_config_path,
+            input_corpus_path=corpus_path,
+            output_directory=family_mismatch_output,
+            bootstrap_replicates=10,
+        )
+    assert not family_mismatch_output.exists()
     private_value = "sk-live-PRIVATEREVIEW123456789"
     private_config = json.loads(json.dumps(config))
     private_config["human_review"] = {"state": "not_run", "reason": private_value}
@@ -727,6 +775,8 @@ def test_one_command_runs_adapter_matrix_and_emits_strict_content_free_bundle(
         _validate_cluster_comparative_analysis(tampered_analysis)
     observations = json.loads((output / "observations.json").read_text())
     sample_registry = json.loads((output / "sample-registry.json").read_text())
+    assert observations["run_manifest"]["aggregation_contract_version"] == "1.2"
+    assert observations["run_manifest"]["watermark_family"] == "kgw"
     final_pair = {
         item["cohort"]: item
         for item in sample_registry["samples"]

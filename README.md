@@ -31,9 +31,10 @@ python -m pip install dewatermark
 dewatermark --version
 ```
 
-> **Current release:** This page documents `0.7.0`, including detector
-> localization, detector-guided mitigation, and the KGW and Unigram reference
-> packs.
+> **Current release:** This page documents `0.8.0`, including operator-scoped
+> mitigation profiles, bounded detector attributions, a context-aware minimal-
+> edit strategy, and the sealed SynthID Text research pack. The pack remains
+> explicitly uncalibrated, non-independent, and non-vendor-equivalent.
 
 Install optional features only when you need them:
 
@@ -193,14 +194,15 @@ dewatermark detectors list
 dewatermark detectors doctor
 dewatermark detectors conformance
 dewatermark detectors packs
+dewatermark detectors scaffold --pack synthid --output ./synthid-pack
 ```
 
 The built-in KGW-, Unigram-, and tournament-style detectors are small test
 cases for integration code, not production detectors. The packaged KGW and
 Unigram profiles score one exact, closed-vocabulary reference configuration;
-the KGW pack also keeps its older token example. The SynthID pack is only a
-disabled template until its required configuration and independent tests are
-supplied.
+the KGW pack also keeps its older token example. The SynthID pack can now seal
+and run one exact operator-controlled public-research configuration, including
+bounded contribution spans, but starts uncalibrated and non-independent.
 
 A passing conformance test means the integration passes its known test cases.
 It does not prove that the tool removes a production watermark. See the
@@ -236,6 +238,17 @@ dewatermark mitigate \
   --consent
 ```
 
+For repeatable operator deployments, bind those component identities, strategy
+options, quality policy, seed, limits, and evidence status in one public profile:
+
+```bash
+dewatermark profiles doctor operator-profile.json
+dewatermark mitigate --input input.txt --profile operator-profile.json --consent
+```
+
+Profiles contain only public identifiers and digests; keys and local paths stay
+in the sealed operator channel. See [operator-scoped mitigation profiles](https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/MITIGATION_PROFILES.md).
+
 The detector and strategy names above are installed extensions, not bundled
 production services. The included KGW and Unigram profiles are exact, offline
 reference configurations for integration and conformance work. They are
@@ -246,12 +259,13 @@ for the Python API, budgets, subprocess strategy protocol, and acceptance rules.
 ### Current Claude limitation
 
 Anthropic has
-[confirmed text marking](https://support.claude.com/en/articles/16266773-how-claude-marks-ai-generated-content)
-for supported Claude models, but it has not published the detector and
-verification procedure needed for an independent test. `dewatermark` therefore
-returns `unsupported`; its capability metadata records
+[described its supported Claude marking as a version of SynthID-Text](https://www.anthropic.com/news/claude-text-watermark),
+but it has not published the deployed configuration, keys, calibrated
+thresholds, or detector contract needed for an independent test. `dewatermark`
+therefore returns `unsupported`; its capability metadata records
 `status=unsupported_pending_spec`. It does not claim that Unicode cleanup or a
-generic rewrite removes a Claude watermark.
+generic rewrite removes a Claude watermark. The public SynthID research lab is
+not a Claude detector; see [the exact boundary](https://github.com/cyzanfar/text-watermark-remover/blob/main/docs/SYNTHID_LAB.md).
 
 ## Agents and automation
 

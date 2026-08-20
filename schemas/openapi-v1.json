@@ -721,6 +721,30 @@
         "allOf": [
           {
             "if": {
+              "required": [
+                "profile_id"
+              ]
+            },
+            "then": {
+              "required": [
+                "profile_sha256"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "profile_sha256"
+              ]
+            },
+            "then": {
+              "required": [
+                "profile_id"
+              ]
+            }
+          },
+          {
+            "if": {
               "properties": {
                 "status": {
                   "const": "verified"
@@ -900,6 +924,15 @@
           },
           "primary_before": {
             "$ref": "#/components/schemas/MitigationDetectorObservation"
+          },
+          "profile_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]*$",
+            "type": "string"
+          },
+          "profile_sha256": {
+            "$ref": "#/components/schemas/MitigationSha256"
           },
           "quality": {
             "type": "object"

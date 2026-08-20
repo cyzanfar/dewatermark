@@ -12,10 +12,10 @@ It cannot prove that text is human-written. It cannot prove that every
 watermark is absent. It cannot transfer a result from one tokenizer, key,
 threshold, or provider to another.
 
-Anthropic has confirmed embedded text marking for supported Claude models
-launched on or after August 2, 2026, but has not published the algorithm, keys,
-detector, threshold, or technical verification guidance used here. Claude
-therefore remains `unsupported` with status `unsupported_pending_spec`.
+Anthropic has described embedded marking for supported Claude models as a
+version of SynthID-Text, but has not published the deployed configuration,
+keys, calibrated thresholds, or detector contract used here. Claude therefore
+remains `unsupported` with status `unsupported_pending_spec`.
 Unicode cleanup and generic rewriting are not evidence of Claude watermark
 removal. The same rule applies to any private provider scheme without a
 compatible detector.

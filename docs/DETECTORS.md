@@ -58,13 +58,20 @@ implementation: its executable or source and every pinned code or model
 artifact that can change its decisions. It is not the Python command wrapper,
 detector configuration, watermark target, or secret key. Two command detectors
 with the same implementation digest are aliases, not independent verifiers.
-The runtime also binds executable/code identity and normalizes Python comments
-and formatting to reject obvious launcher aliases. Syntactic difference is not
-proof of methodological independence: `independent=true` and the implementation
-commitment are trusted operator declarations that require external review.
-Older manifests without this field can still run ordinary detection, but they
-cannot take part in verified mitigation. Subclasses can add uncommitted Python
-behavior, so only the exact `CommandDetector` wrapper is accepted for this use.
+The runtime binds two local code identities. A semantic Python-AST identity
+normalizes comments, formatting, pass statements, and unused module constants
+so cosmetic launcher copies cannot manufacture held-out independence. A
+separate exact-raw identity covers every bounded executable and script byte; it
+binds scoring caches and postflight checks, so even comment changes or values
+read indirectly through `globals()` count as drift. Both readers accept only
+bounded regular files and use nonblocking opens, so pipes and other special
+files fail identity resolution instead of waiting for a writer. Syntactic
+difference is not proof of methodological independence: `independent=true` and
+the implementation commitment are trusted operator declarations that require
+external review. Older manifests without this field can still run ordinary
+detection, but they cannot take part in verified mitigation. Subclasses can add
+uncommitted Python behavior, so only the exact `CommandDetector` wrapper is
+accepted for this use.
 
 Generic in-process extensions do not receive secrets. A keyed detector should
 use an operator-owned command adapter with the key supplied through a dedicated
@@ -78,9 +85,9 @@ local file, not a manifest or general application credential.
 | KGW and Unigram | Built-in fixtures and packaged reference packs | Reference packs are exact but uncalibrated and non-production |
 | Arbitrary local KGW or Unigram tokenizer/key | Sealed operator adapter | Starts uncalibrated and non-independent |
 | EXP/ITS and other distortion-free schemes | External adapter | Pin an author or independent implementation |
-| SynthID Text | Unresolved adapter template | No Gemini production key or production claim |
+| SynthID Text | [Sealed operator research adapter](SYNTHID_LAB.md) | Research-only; no Gemini production key or production claim |
 | Semantic watermark schemes | External adapter | Embedding model and partition settings are part of the configuration |
-| Anthropic Claude production text | `unsupported` with `unsupported_pending_spec` metadata | No public algorithm, keys, threshold, or detector guidance in this package |
+| Anthropic Claude production text | `unsupported` with `unsupported_pending_spec` metadata | The SynthID family is disclosed, but deployed configuration, keys, calibrated thresholds, and a detector contract remain pending |
 | Other private provider schemes | `unsupported` | Unicode findings or a generic rewrite are not evidence of that scheme |
 
 The dependency-free `reference-kgw`, `reference-unigram`, and
@@ -172,15 +179,25 @@ starting the executable. Detection then:
    score direction, finite values, status consistency, and effective tokens;
 5. returns scoped evidence or a redacted failure.
 
-Command protocol 1.1 detectors must declare and return `threshold_operator` as one of
-`>`, `>=`, `<`, or `<=`; it must point in the same direction as
-`score_direction`. Equality is detected only for an inclusive operator. For
-compatibility, command protocol 1.0 treats the newer operator, implementation,
+Command protocol 1.1 and newer detectors must declare and return
+`threshold_operator` as one of `>`, `>=`, `<`, or `<=`; it must point in the
+same direction as `score_direction`. Equality is detected only for an inclusive
+operator. For compatibility, command protocol 1.0 treats the newer operator, implementation,
 target, and secret-binding names as ignored extension metadata. Ordinary legacy
 detection defaults to `>=` for higher scores and `<=` for lower scores. It cannot
 take part in verified mitigation because its static decision contract is
 incomplete. Unknown v1 response fields are ignored and are not copied into
 public evidence. Contradictory decisions are still rejected.
+
+Command protocol 1.2 can opt into native token attribution with
+`attribution_kind="token_character_spans"` and a bounded
+`maximum_attributions`. The request repeats that bound. The response then returns
+ordered, non-overlapping half-open character ranges with finite numeric scores;
+optional thresholds and p-values remain numeric metadata. Token strings and
+arbitrary fields are rejected, so the normalized evidence contains offsets and
+numbers only under `details.localization`. These spans guide localization and
+candidate generation; they are not independently verified watermark evidence.
+Protocols 1.0 and 1.1 continue to ignore colliding attribution extension names.
 
 The command is trusted executable code, not a sandbox. Use a container or
 operating-system boundary for untrusted research code. Conformance helpers

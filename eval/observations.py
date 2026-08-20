@@ -427,10 +427,10 @@ def validate_observation_set(
     detectors = _validate_ids(value.get("detectors"), "detectors")
     conditions = _validate_ids(value.get("conditions"), "conditions")
     run_manifest = value["run_manifest"]
-    strict_aggregate = run_manifest.get("aggregation_contract_version") == "1.1"
+    strict_aggregate = run_manifest.get("aggregation_contract_version") in {"1.1", "1.2"}
     if strict_aggregate and any("::" in identifier for identifier in (*detectors, *conditions)):
         raise ObservationValidationError(
-            "aggregation contract 1.1 reserves the double-colon identifier delimiter"
+            "strict aggregation contracts reserve the double-colon identifier delimiter"
         )
     primary = [
         identifier for identifier, item in detectors.items() if item.get("role") == "primary"

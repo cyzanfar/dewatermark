@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import shutil
 import sys
 import time
@@ -9,6 +10,7 @@ from threading import Event
 
 import pytest
 
+import dewatermark.bounded_process as bounded_process_module
 import dewatermark.detector_session as detector_session_module
 from dewatermark.assurance import inspect
 from dewatermark.command_detector import (
@@ -23,9 +25,20 @@ from dewatermark.command_detector import (
     make_command_detector_factory,
     run_command_detector_conformance,
 )
+from dewatermark.command_safety import (
+    command_code_identities_sha256,
+    public_command_identity_projection,
+)
 from dewatermark.config import DewatermarkConfig
-from dewatermark.detector_session import DetectorSession
-from dewatermark.providers import register_detector, unregister_detector
+from dewatermark.detector_session import DetectorSession, SignalSpan
+from dewatermark.exceptions import ConfigurationError
+from dewatermark.extension_safety import extension_identity
+from dewatermark.providers import (
+    detector_binding_identity,
+    detector_identity,
+    register_detector,
+    unregister_detector,
+)
 from dewatermark.request_context import RequestContext, ResourceBudgetExceeded, request_scope
 
 PUBLIC_CONFIGURATION = {
@@ -72,6 +85,11 @@ def command_fixture(tmp_path: Path) -> Path:
         "if mode=='legacy': r.pop('threshold_operator');r['legacy_extension']='ignored'\n"
         "if mode=='legacy_number': r.update(protocol_version='1.0',threshold_operator=42)\n"
         "if mode=='legacy_conflict': r.update(protocol_version='1.0',threshold_operator='<')\n"
+        "if mode=='attribution':\n"
+        " r['protocol_version']='1.2'\n"
+        " start=p.get('text','').index('marked')\n"
+        " r['attributions']=[{'start':start,'end':start+6,'score':2.0,"
+        "'p_value':0.01,'threshold':0.5}]\n"
         "json.dump(r,sys.stdout)\n",
         encoding="utf-8",
     )
@@ -91,6 +109,24 @@ def _manifest(**overrides):
     }
     values.update(overrides)
     return command_detector_manifest(**values)
+
+
+def _response(**overrides):
+    values = {
+        "protocol_version": "1.2",
+        "action": "detect.result",
+        "detector": "fixture-command",
+        "scheme": "fixture-scheme",
+        "status": "detected",
+        "score": 2.0,
+        "threshold": 0.5,
+        "score_direction": "higher",
+        "threshold_operator": ">=",
+        "effective_tokens": 2,
+        "configuration_sha256": CONFIGURATION_SHA256,
+    }
+    values.update(overrides)
+    return values
 
 
 def _detector(
@@ -125,6 +161,7 @@ def test_static_manifest_and_availability_never_start_command(command_fixture, t
     evidence = detector.detect("marked text")
     assert marker.exists()
     request = json.loads(marker.read_text(encoding="utf-8"))
+    assert request["protocol_version"] == "1.1"
     assert request["action"] == "detect"
     assert request["text"] == "marked text"
     assert request["policy"] == {
@@ -479,6 +516,286 @@ def test_v1_response_extensions_are_ignored_without_becoming_public(command_fixt
     assert "private_debug" not in evidence.details
 
 
+def test_v12_native_attribution_is_bound_normalized_and_reaches_session(command_fixture, tmp_path):
+    marker = tmp_path / "attribution.json"
+    manifest = _manifest(
+        attribution_kind="token_character_spans",
+        maximum_attributions=2,
+    )
+    detector = _detector(command_fixture, marker, "attribution", manifest=manifest)
+
+    observation = DetectorSession(detector, max_queries=2).score("alpha marked beta")
+
+    request = json.loads(marker.read_text(encoding="utf-8"))
+    assert request["protocol_version"] == "1.2"
+    assert request["attribution"] == {
+        "kind": "token_character_spans",
+        "maximum_attributions": 2,
+    }
+    assert observation.evidence.details["localization"] == [
+        {"start": 6, "end": 12, "score": 2.0, "p_value": 0.01, "threshold": 0.5}
+    ]
+    assert observation.localization == (SignalSpan(6, 12, score=2.0, p_value=0.01, threshold=0.5),)
+
+
+@pytest.mark.parametrize(
+    "attributions",
+    [
+        "not-a-list",
+        [{"start": 0, "end": 5, "score": 2.0, "token": "privateword"}],
+        [{"start": True, "end": 5, "score": 2.0}],
+        [{"start": 0, "end": 11, "score": 2.0}],
+        [{"start": 0, "end": 5, "score": True}],
+        [{"start": 0, "end": 5, "score": float("inf")}],
+        [{"start": 0, "end": 5, "score": 2.0, "p_value": -0.1}],
+        [
+            {"start": 0, "end": 5, "score": 2.0},
+            {"start": 4, "end": 10, "score": 1.0},
+        ],
+        [{"start": 5, "end": 6, "score": 1.0}],
+    ],
+    ids=(
+        "not-list",
+        "text-exfiltration-field",
+        "boolean-offset",
+        "out-of-range",
+        "boolean-score",
+        "non-finite-score",
+        "invalid-p-value",
+        "overlap",
+        "whitespace-only",
+    ),
+)
+def test_v12_attribution_rejects_malformed_or_text_bearing_items(attributions):
+    detector = CommandDetector(
+        (sys.executable,),
+        _manifest(
+            attribution_kind="token_character_spans",
+            maximum_attributions=2,
+        ),
+        OFFLINE,
+    )
+
+    with pytest.raises(CommandDetectorContractError) as caught:
+        detector._normalize_response(
+            _response(attributions=attributions, effective_tokens=10), "alpha beta"
+        )
+
+    assert "privateword" not in str(caught.value)
+    assert "alpha beta" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("maximum", "effective_tokens", "attributions"),
+    [
+        (
+            1,
+            2,
+            [
+                {"start": 0, "end": 5, "score": 2.0},
+                {"start": 6, "end": 10, "score": 1.0},
+            ],
+        ),
+        (
+            2,
+            1,
+            [
+                {"start": 0, "end": 5, "score": 2.0},
+                {"start": 6, "end": 10, "score": 1.0},
+            ],
+        ),
+    ],
+    ids=("manifest-maximum", "effective-token-maximum"),
+)
+def test_v12_attribution_count_is_bounded(maximum, effective_tokens, attributions):
+    detector = CommandDetector(
+        (sys.executable,),
+        _manifest(
+            attribution_kind="token_character_spans",
+            maximum_attributions=maximum,
+        ),
+        OFFLINE,
+    )
+
+    with pytest.raises(CommandDetectorContractError, match="attribution limit"):
+        detector._normalize_response(
+            _response(attributions=attributions, effective_tokens=effective_tokens),
+            "alpha beta",
+        )
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        _response(protocol_version="1.1"),
+        _response(),
+    ],
+    ids=("old-response-version", "missing-attributions"),
+)
+def test_v12_opt_in_requires_v12_attribution_response(response):
+    detector = CommandDetector(
+        (sys.executable,),
+        _manifest(
+            attribution_kind="token_character_spans",
+            maximum_attributions=2,
+        ),
+        OFFLINE,
+    )
+
+    with pytest.raises(CommandDetectorContractError, match="attribution"):
+        detector._normalize_response(response, "alpha beta")
+
+
+@pytest.mark.parametrize("protocol_version", ["1.0", "1.1"])
+def test_legacy_contracts_ignore_colliding_attribution_extensions(protocol_version):
+    current = _manifest()
+    metadata = dict(current.metadata)
+    metadata["command_protocol_version"] = protocol_version
+    metadata["attribution_kind"] = {"text": "privateword"}
+    metadata["maximum_attributions"] = "privateword"
+    if protocol_version == "1.0":
+        metadata.pop("threshold_operator")
+    legacy = replace(current, metadata=metadata)
+    detector = CommandDetector((sys.executable,), legacy, OFFLINE)
+    response = _response(
+        protocol_version=protocol_version,
+        attributions={"text": "privateword"},
+    )
+    if protocol_version == "1.0":
+        response.pop("threshold_operator")
+
+    evidence = detector._normalize_response(response, "alpha beta")
+
+    assert evidence.status == "detected"
+    assert "localization" not in evidence.details
+    assert "privateword" not in json.dumps(evidence.to_dict())
+
+
+def test_manifest_builder_preserves_legacy_attribution_extension_names():
+    capability = _manifest(
+        metadata={
+            "attribution_kind": {"legacy_extension": "public-value"},
+            "maximum_attributions": "legacy-extension-value",
+        }
+    )
+
+    assert capability.metadata["command_protocol_version"] == "1.1"
+    assert capability.metadata["attribution_kind"] == {"legacy_extension": "public-value"}
+    assert capability.metadata["maximum_attributions"] == "legacy-extension-value"
+    contract = CommandDetector((sys.executable,), capability, OFFLINE)._contract
+    assert contract.attribution_kind is None
+    assert contract.maximum_attributions == 0
+
+
+def test_v12_without_attribution_capability_ignores_colliding_response_extension():
+    detector = CommandDetector((sys.executable,), _manifest(), OFFLINE)
+
+    evidence = detector._normalize_response(
+        _response(attributions={"text": "privateword"}), "alpha beta"
+    )
+
+    assert evidence.status == "detected"
+    assert "localization" not in evidence.details
+
+
+def test_v12_attributions_are_withheld_when_static_configuration_mismatches():
+    detector = CommandDetector(
+        (sys.executable,),
+        _manifest(
+            attribution_kind="token_character_spans",
+            maximum_attributions=2,
+        ),
+        OFFLINE,
+    )
+
+    evidence = detector._normalize_response(
+        _response(
+            configuration_sha256="0" * 64,
+            attributions={"text": "privateword"},
+        ),
+        "alpha beta",
+    )
+
+    assert evidence.status == "configuration_mismatch"
+    assert "localization" not in evidence.details
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"maximum_attributions": 1},
+        {"attribution_kind": "token_character_spans", "maximum_attributions": 0},
+        {"attribution_kind": "token_character_spans", "maximum_attributions": 4097},
+        {"attribution_kind": "unknown", "maximum_attributions": 1},
+        {"attribution_kind": "token_character_spans", "maximum_attributions": True},
+    ],
+)
+def test_v12_manifest_rejects_unbound_or_invalid_attribution_limits(overrides):
+    with pytest.raises((TypeError, ValueError)):
+        _manifest(**overrides)
+
+
+def test_manifest_builder_preserves_valid_looking_legacy_attribution_extensions():
+    capability = _manifest(
+        metadata={
+            "attribution_kind": "token_character_spans",
+            "maximum_attributions": 2,
+        }
+    )
+
+    assert capability.metadata["command_protocol_version"] == "1.1"
+    contract = CommandDetector((sys.executable,), capability, OFFLINE)._contract
+    assert contract.attribution_kind is None
+    assert contract.maximum_attributions == 0
+
+
+def test_v12_explicit_attribution_cannot_be_overridden_through_metadata():
+    with pytest.raises(ValueError, match="cannot override"):
+        _manifest(
+            attribution_kind="token_character_spans",
+            maximum_attributions=2,
+            metadata={
+                "attribution_kind": "token_character_spans",
+                "maximum_attributions": 2,
+            },
+        )
+
+
+def test_v12_manifest_requires_the_complete_attribution_contract():
+    current = _manifest()
+    metadata = dict(current.metadata)
+    metadata["command_protocol_version"] = "1.2"
+    incomplete = replace(current, metadata=metadata)
+
+    with pytest.raises(CommandDetectorContractError, match="attribution_kind is required"):
+        CommandDetector((sys.executable,), incomplete, OFFLINE)
+
+    future_metadata = dict(current.metadata)
+    future_metadata["command_protocol_version"] = "1.3"
+    future_metadata["attribution_kind"] = "token_character_spans"
+    future_metadata["maximum_attributions"] = 2
+    with pytest.raises(CommandDetectorContractError, match="unsupported command protocol minor"):
+        CommandDetector((sys.executable,), replace(current, metadata=future_metadata), OFFLINE)
+
+
+def test_conformance_report_names_the_detector_bound_protocol(command_fixture, tmp_path):
+    marker = tmp_path / "conformance-version.json"
+    detector = _detector(command_fixture, marker)
+    vector = DetectorGoldenVector(
+        name="clear",
+        text="clear text",
+        expected_status="not_detected",
+        expected_score=0.0,
+        expected_threshold=0.5,
+        expected_effective_tokens=2,
+    )
+
+    report = run_command_detector_conformance(detector, (vector,))
+
+    assert detector.capability.metadata["command_protocol_version"] == "1.1"
+    assert report.protocol_version == "1.1"
+
+
 def test_legacy_v1_operator_default_preserves_detection_but_not_verification(
     command_fixture, tmp_path
 ):
@@ -512,6 +829,21 @@ def test_legacy_v1_operator_default_preserves_detection_but_not_verification(
     assert result.reason_code == "command_detector_implementation_unbound"
     assert not primary_marker.exists()
     assert not verifier_marker.exists()
+
+
+def test_legacy_contract_ignores_forward_response_operator_collision():
+    current = _manifest()
+    metadata = dict(current.metadata)
+    metadata["command_protocol_version"] = "1.0"
+    metadata.pop("threshold_operator")
+    legacy = CommandDetector((sys.executable,), replace(current, metadata=metadata), OFFLINE)
+    response = _response(protocol_version="1.3")
+    response.pop("threshold_operator")
+
+    evidence = legacy._normalize_response(response, "alpha beta")
+
+    assert evidence.status == "detected"
+    assert evidence.details["threshold_operator"] == ">="
 
 
 @pytest.mark.parametrize(
@@ -694,6 +1026,194 @@ def test_comment_only_script_copy_cannot_manufacture_independence(command_fixtur
     assert result.reason_code == "held_out_verifier_not_distinct"
     assert not primary_marker.exists()
     assert not verifier_marker.exists()
+
+
+def test_command_code_has_separate_semantic_and_exact_raw_identities(command_fixture):
+    command = (sys.executable, str(command_fixture), "public-argument")
+    semantic_before, raw_before = command_code_identities_sha256(command)
+
+    command_fixture.write_text(
+        command_fixture.read_text(encoding="utf-8") + "\n# behaviorally visible raw drift\n",
+        encoding="utf-8",
+    )
+    semantic_after, raw_after = command_code_identities_sha256(command)
+
+    assert semantic_before is not None
+    assert raw_before is not None
+    assert semantic_after == semantic_before
+    assert raw_after != raw_before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="atomic replacement semantics differ on Windows")
+def test_profile_raw_code_is_rechecked_after_launch_before_source_input(
+    command_fixture, tmp_path, monkeypatch
+):
+    marker = tmp_path / "must-not-receive-source.json"
+    detector = _detector(command_fixture, marker)
+    _semantic, expected_raw = command_code_identities_sha256(detector._command)
+    assert expected_raw is not None
+    CommandDetector._bind_profile_command_code_raw_sha256(detector, expected_raw)
+    replacement = tmp_path / "replacement.py"
+    replacement.write_text(
+        command_fixture.read_text(encoding="utf-8") + "\n# replaced after launch\n",
+        encoding="utf-8",
+    )
+    real_popen = bounded_process_module.subprocess.Popen
+    replaced = False
+
+    def replace_after_launch(*args, **kwargs):
+        nonlocal replaced
+        process = real_popen(*args, **kwargs)
+        os.replace(replacement, command_fixture)
+        replaced = True
+        return process
+
+    monkeypatch.setattr(bounded_process_module.subprocess, "Popen", replace_after_launch)
+    with request_scope(RequestContext.from_config(OFFLINE)):
+        with pytest.raises(CommandDetectorContractError, match="changed after profile review"):
+            detector.detect("marked private source")
+
+    assert replaced is True
+    assert not marker.exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs require POSIX")
+@pytest.mark.parametrize("as_script", [False, True], ids=("executable", "python-script"))
+def test_command_code_identity_rejects_fifo_without_blocking(tmp_path, as_script):
+    fifo = tmp_path / ("detector.py" if as_script else "detector")
+    os.mkfifo(fifo)
+    command = (sys.executable, str(fifo)) if as_script else (str(fifo),)
+
+    started = time.monotonic()
+    identities = command_code_identities_sha256(command)
+
+    assert identities == (None, None)
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    ("launcher_name", "argv"),
+    [
+        ("sh", ("detector.sh",)),
+        ("env", ("python", "detector.py")),
+        ("node", ("detector.js",)),
+        ("perl", ("detector.pl",)),
+        ("ruby", ("detector.rb",)),
+        ("pwsh", ("-File", "detector.ps1")),
+    ],
+)
+def test_unparsed_launchers_cannot_establish_command_code_identity(tmp_path, launcher_name, argv):
+    launcher = tmp_path / launcher_name
+    launcher.write_bytes(b"reviewed launcher fixture")
+    for argument in argv:
+        if "." in argument and not argument.startswith("-"):
+            (tmp_path / argument).write_text("fixture code\n", encoding="utf-8")
+    command = (
+        str(launcher),
+        *(
+            str(tmp_path / item) if "." in item and not item.startswith("-") else item
+            for item in argv
+        ),
+    )
+
+    assert command_code_identities_sha256(command) == (None, None)
+
+
+@pytest.mark.parametrize("inline", [False, True], ids=("split", "inline"))
+def test_command_factory_identity_excludes_private_and_code_paths_but_binds_public_args(
+    command_fixture, tmp_path, inline
+):
+    copied_code = tmp_path / "same-code-copy.py"
+    shutil.copyfile(command_fixture, copied_code)
+    secret_a = tmp_path / "operator-a.json"
+    secret_b = tmp_path / "operator-b.json"
+    config_a = tmp_path / "private-config-a.json"
+    config_b = tmp_path / "private-config-b.json"
+    for path in (secret_a, secret_b, config_a, config_b):
+        path.write_text("private fixture", encoding="utf-8")
+    secret_args_a = (f"--secret-file={secret_a}",) if inline else ("--secret-file", str(secret_a))
+    secret_args_b = (f"--secret-file={secret_b}",) if inline else ("--secret-file", str(secret_b))
+    manifest = _manifest(
+        implementation_sha256="a" * 64,
+        watermark_target_sha256="b" * 64,
+        requires_secret=True,
+        secret_binding="operator_managed_file",
+    )
+    command_a = (
+        sys.executable,
+        str(command_fixture),
+        "public-mode",
+        *secret_args_a,
+        f"--config={config_a}",
+    )
+    command_b = (
+        sys.executable,
+        str(copied_code),
+        "public-mode",
+        *secret_args_b,
+        f"--config={config_b}",
+    )
+    factory_a = make_command_detector_factory(command_a, manifest)
+    factory_b = make_command_detector_factory(command_b, manifest)
+
+    projection = public_command_identity_projection(command_a)
+    rendered = json.dumps(projection)
+    assert str(command_fixture) not in rendered
+    assert str(secret_a) not in rendered
+    assert str(config_a) not in rendered
+    assert extension_identity(factory_a, "detector") == extension_identity(factory_b, "detector")
+    changed_public = make_command_detector_factory(
+        (*command_b[:2], "different-public-mode", *command_b[3:]), manifest
+    )
+    assert (
+        extension_identity(factory_b, "detector")["static_state_sha256"]
+        != extension_identity(changed_public, "detector")["static_state_sha256"]
+    )
+
+
+@pytest.mark.parametrize("inline", [False, True], ids=("split", "inline"))
+def test_registered_command_factory_recheck_ignores_only_secret_path_changes(
+    command_fixture, tmp_path, inline
+):
+    name = f"fixture-private-path-recheck-{'inline' if inline else 'split'}"
+    secret_a = tmp_path / "operator-a.json"
+    secret_b = tmp_path / "operator-b.json"
+    secret_a.write_text("first private value", encoding="utf-8")
+    secret_b.write_text("second private value", encoding="utf-8")
+    secret_args_a = (f"--secret-file={secret_a}",) if inline else ("--secret-file", str(secret_a))
+    secret_args_b = (f"--secret-file={secret_b}",) if inline else ("--secret-file", str(secret_b))
+    manifest = _manifest(
+        identifier=name,
+        implementation_sha256="c" * 64,
+        watermark_target_sha256="d" * 64,
+        requires_secret=True,
+        secret_binding="operator_managed_file",
+    )
+    factory = make_command_detector_factory(
+        (sys.executable, str(command_fixture), "public-mode", *secret_args_a),
+        manifest,
+    )
+    register_detector(name, factory)
+    try:
+        registered_before = detector_identity(name)
+        profile_before = detector_binding_identity(name)
+        object.__setattr__(
+            factory,
+            "command",
+            (sys.executable, str(command_fixture), "public-mode", *secret_args_b),
+        )
+        assert detector_identity(name) == registered_before
+        assert detector_binding_identity(name) == profile_before
+
+        object.__setattr__(
+            factory,
+            "command",
+            (sys.executable, str(command_fixture), "different-public-mode", *secret_args_b),
+        )
+        with pytest.raises(ConfigurationError, match="identity changed"):
+            detector_identity(name)
+    finally:
+        unregister_detector(name)
 
 
 def test_unused_constant_script_copy_cannot_manufacture_independence(command_fixture, tmp_path):
@@ -1050,6 +1570,119 @@ def test_command_code_change_between_score_and_verify_invalidates_cache(command_
     assert not verifier_marker.exists()
 
 
+def test_self_source_comment_command_drift_invalidates_cache(command_fixture, tmp_path):
+    target = "a" * 64
+    base_source = command_fixture.read_text(encoding="utf-8")
+    command_fixture.write_text(
+        base_source.replace(
+            "score=2.0 if",
+            "score=float(Path(__file__).read_text(encoding='utf-8')"
+            ".rsplit('RAW_SCORE=',1)[1].split()[0]) if",
+        )
+        + "\n# RAW_SCORE=2.0\n",
+        encoding="utf-8",
+    )
+    verifier_fixture = tmp_path / "comment_cache_verifier_fixture.py"
+    verifier_fixture.write_text(
+        base_source.replace("score=2.0 if", "score=3.0 if"),
+        encoding="utf-8",
+    )
+    primary_marker = tmp_path / "comment-cache-primary.json"
+    verifier_marker = tmp_path / "comment-cache-verifier.json"
+    primary = _detector(
+        command_fixture,
+        primary_marker,
+        manifest=_manifest(
+            identifier="fixture-comment-cache-primary",
+            implementation_sha256="1" * 64,
+            watermark_target_sha256=target,
+        ),
+    )
+    verifier = _detector(
+        verifier_fixture,
+        verifier_marker,
+        manifest=_manifest(
+            identifier="fixture-comment-cache-verifier",
+            implementation_sha256="2" * 64,
+            watermark_target_sha256=target,
+        ),
+    )
+    session = DetectorSession(primary, verifier_detectors=(verifier,))
+
+    assert session.score("marked source").evidence.status == "detected"
+    primary_marker.unlink()
+    semantic_before, raw_before = command_code_identities_sha256(primary._command)
+    command_fixture.write_text(
+        command_fixture.read_text(encoding="utf-8").replace("# RAW_SCORE=2.0", "# RAW_SCORE=2.5"),
+        encoding="utf-8",
+    )
+    semantic_after, raw_after = command_code_identities_sha256(primary._command)
+    result = session.verify("marked source", "clear candidate")
+
+    assert semantic_after == semantic_before
+    assert raw_after != raw_before
+    assert result.status == "not_verifiable"
+    assert result.reason_code == "detector_policy_drift"
+    assert not primary_marker.exists()
+    assert not verifier_marker.exists()
+
+
+def test_dynamic_global_command_drift_invalidates_cache(command_fixture, tmp_path):
+    target = "a" * 64
+    source = command_fixture.read_text(encoding="utf-8").replace(
+        "score=2.0 if",
+        "DYNAMIC_SCORE=2.0\nscore=globals()['DYNAMIC_SCORE'] if",
+    )
+    command_fixture.write_text(source, encoding="utf-8")
+    verifier_fixture = tmp_path / "dynamic_global_verifier_fixture.py"
+    verifier_fixture.write_text(
+        source.replace("DYNAMIC_SCORE=2.0", "DYNAMIC_SCORE=3.0").replace(
+            "threshold=0.5", "threshold=float('0.5')"
+        ),
+        encoding="utf-8",
+    )
+    primary_marker = tmp_path / "dynamic-global-primary.json"
+    verifier_marker = tmp_path / "dynamic-global-verifier.json"
+    primary = _detector(
+        command_fixture,
+        primary_marker,
+        manifest=_manifest(
+            identifier="fixture-dynamic-global-primary",
+            implementation_sha256="1" * 64,
+            watermark_target_sha256=target,
+        ),
+    )
+    verifier = _detector(
+        verifier_fixture,
+        verifier_marker,
+        manifest=_manifest(
+            identifier="fixture-dynamic-global-verifier",
+            implementation_sha256="2" * 64,
+            watermark_target_sha256=target,
+        ),
+    )
+    session = DetectorSession(primary, verifier_detectors=(verifier,))
+
+    assert session.score("marked source").evidence.status == "detected"
+    primary_marker.unlink()
+    semantic_before, raw_before = command_code_identities_sha256(primary._command)
+    command_fixture.write_text(
+        command_fixture.read_text(encoding="utf-8").replace(
+            "DYNAMIC_SCORE=2.0", "DYNAMIC_SCORE=2.5"
+        ),
+        encoding="utf-8",
+    )
+    semantic_after, raw_after = command_code_identities_sha256(primary._command)
+    result = session.verify("marked source", "clear candidate")
+
+    assert semantic_after == semantic_before
+    assert raw_after != raw_before
+    assert result.status == "not_verifiable"
+    assert result.reason_code == "detector_policy_drift"
+    assert not primary_marker.exists()
+    assert not verifier_marker.exists()
+
+
 def test_command_code_identity_is_rechecked_after_detector_calls(
     command_fixture, tmp_path, monkeypatch
 ):
@@ -1080,18 +1713,22 @@ def test_command_code_identity_is_rechecked_after_detector_calls(
             watermark_target_sha256=target,
         ),
     )
-    real_identity = detector_session_module.command_code_identity_sha256
-    original_identity = real_identity(primary._command)
+    real_identities = detector_session_module.command_code_identities_sha256
+    original_semantic, original_raw = real_identities(primary._command)
     calls = 0
 
-    def drifting_identity(command):
+    def drifting_identities(command):
         nonlocal calls
         if command != primary._command:
-            return real_identity(command)
+            return real_identities(command)
         calls += 1
-        return original_identity if calls <= 4 else "f" * 64
+        return (original_semantic, original_raw if calls <= 4 else "f" * 64)
 
-    monkeypatch.setattr(detector_session_module, "command_code_identity_sha256", drifting_identity)
+    monkeypatch.setattr(
+        detector_session_module,
+        "command_code_identities_sha256",
+        drifting_identities,
+    )
 
     result = DetectorSession(primary, verifier_detectors=(verifier,)).verify(
         "marked source", "clear candidate"

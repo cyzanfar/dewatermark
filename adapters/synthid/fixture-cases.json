@@ -1,0 +1,134 @@
+{
+  "attribution_case": {
+    "expected_attributions": [
+      {"end": 11, "score": 1.0, "start": 9},
+      {"end": 20, "score": 1.0, "start": 18},
+      {"end": 29, "score": 1.0, "start": 27}
+    ],
+    "fixture_id": "token-character-attribution-v1",
+    "maximum_attributions": 3,
+    "offset_mapping": [
+      [0, 2],
+      [3, 5],
+      [6, 8],
+      [9, 11],
+      [12, 14],
+      [15, 17],
+      [18, 20],
+      [21, 23],
+      [24, 26],
+      [27, 29]
+    ],
+    "source_fixture_id": "mean-no-mask-v1",
+    "text": "aa bb cc dd ee ff gg hh ii jj"
+  },
+  "cases": [
+    {
+      "context_history_size": 8,
+      "detector_type": "mean",
+      "eos_token_id": 99,
+      "expected_effective_tokens": 7,
+      "expected_g_values": [
+        [1, 1, 1],
+        [0, 1, 0],
+        [1, 0, 0],
+        [1, 1, 1],
+        [1, 1, 0],
+        [1, 0, 0],
+        [1, 1, 1]
+      ],
+      "expected_mask": [1, 1, 1, 1, 1, 1, 1],
+      "expected_score": 0.6666666666666666,
+      "fixture_id": "mean-no-mask-v1",
+      "keys": [12345, 67890, 13579],
+      "ngram_len": 4,
+      "token_ids": [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      "weights": []
+    },
+    {
+      "context_history_size": 8,
+      "detector_type": "weighted_mean",
+      "eos_token_id": 99,
+      "expected_effective_tokens": 7,
+      "expected_g_values": [
+        [1, 1, 1],
+        [0, 1, 0],
+        [1, 0, 0],
+        [1, 1, 1],
+        [1, 1, 0],
+        [1, 0, 0],
+        [1, 1, 1]
+      ],
+      "expected_mask": [1, 1, 1, 1, 1, 1, 1],
+      "expected_score": 0.7835497835497837,
+      "fixture_id": "weighted-mean-explicit-weights-v1",
+      "keys": [12345, 67890, 13579],
+      "ngram_len": 4,
+      "token_ids": [11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+      "weights": [10.0, 5.5, 1.0]
+    },
+    {
+      "context_history_size": 3,
+      "detector_type": "mean",
+      "eos_token_id": 999,
+      "expected_effective_tokens": 5,
+      "expected_g_values": [
+        [1, 1, 1, 0],
+        [0, 1, 1, 1],
+        [1, 0, 1, 0],
+        [1, 1, 1, 0],
+        [0, 1, 1, 1],
+        [1, 0, 1, 0],
+        [1, 1, 1, 0],
+        [1, 1, 0, 0],
+        [1, 1, 1, 1],
+        [1, 1, 0, 1]
+      ],
+      "expected_mask": [1, 1, 1, 0, 0, 0, 0, 0, 1, 1],
+      "expected_score": 0.75,
+      "fixture_id": "bounded-context-repetition-mask-v1",
+      "keys": [1, 2, 3, 4],
+      "ngram_len": 3,
+      "token_ids": [7, 8, 9, 7, 8, 9, 7, 8, 9, 42, 43, 44],
+      "weights": []
+    },
+    {
+      "context_history_size": 16,
+      "detector_type": "weighted_mean",
+      "eos_token_id": 2,
+      "expected_effective_tokens": 1,
+      "expected_g_values": [[0, 1], [0, 1], [0, 1], [1, 0], [1, 1]],
+      "expected_mask": [1, 0, 0, 0, 0],
+      "expected_score": 0.09090909090909091,
+      "fixture_id": "eos-mask-includes-eos-ngram-v1",
+      "keys": [987654321, 123456789],
+      "ngram_len": 5,
+      "token_ids": [5, 6, 7, 8, 9, 2, 11, 12, 13],
+      "weights": [10.0, 1.0]
+    },
+    {
+      "context_history_size": 4,
+      "detector_type": "mean",
+      "eos_token_id": 999,
+      "expected_effective_tokens": 4,
+      "expected_g_values": [[0, 1], [0, 0], [1, 0], [1, 0]],
+      "expected_mask": [1, 1, 1, 1],
+      "expected_score": 0.375,
+      "fixture_id": "signed-int64-overflow-edge-v1",
+      "keys": [9223372036854775783, 9223372036854775643],
+      "ngram_len": 3,
+      "token_ids": [9223372036854775800, 9223372036854775799, 42, 9223372036854775798, 17, 9223372036854775797],
+      "weights": []
+    }
+  ],
+  "description": "Public synthetic token-ID vectors for the pinned SynthID Text hashing, masking, mean, and weighted-mean semantics. These keys are fixtures only.",
+  "reference_validation": {
+    "byteorder": "little",
+    "scope": "g_values_and_repetition_eos_masks",
+    "status": "reproducible_pinned_upstream_record",
+    "torch_version": "2.4.0",
+    "transformers_version": "4.43.3"
+  },
+  "schema_version": "1.0",
+  "upstream_revision": "addb4a158143c7c6851a1308f78b89fceed59683"
+}

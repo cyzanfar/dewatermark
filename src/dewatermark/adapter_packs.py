@@ -30,7 +30,17 @@ _PACK_FILES: dict[AdapterPackName, tuple[str, ...]] = {
         "operator_adapter.py",
         "seal_operator.py",
     ),
-    "synthid": ("README.md", "adapter-manifest.template.json"),
+    "synthid": (
+        "README.md",
+        "adapter-manifest.template.json",
+        "conformance.py",
+        "fixture-cases.json",
+        "operator_adapter.py",
+        "seal_operator.py",
+        "threshold-evidence.template.json",
+        "upstream-conformance-record.json",
+        "upstream_conformance.py",
+    ),
     "unigram": (
         "README.md",
         "build_natural_profile.py",

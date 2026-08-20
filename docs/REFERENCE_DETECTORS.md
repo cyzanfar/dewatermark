@@ -116,9 +116,8 @@ a model identifier or downloads a tokenizer.
 
 `seal_operator.py` publishes a new directory containing `operator-config.json`
 and `operator-capability.json` as one atomic unit. It refuses an existing output
-directory. The adapter
-then runs through the same bounded `CommandDetector` protocol as other external
-detectors.
+directory. The adapter then runs through the same bounded `CommandDetector`
+protocol as other external detectors.
 
 "Sealed" means that the public configuration is bound to exact local material.
 It does not mean signed, calibrated, independent, or production-ready. A newly
@@ -131,13 +130,21 @@ Static discovery of a sealed capability does not read its tokenizer, key,
 upstream checkout, or model files. Those files are touched only when the
 operator explicitly runs detection.
 
-## SynthID Text template
+## Sealed SynthID Text research adapter
 
 [`adapters/synthid`](../adapters/synthid) pins a public SynthID Text source
-revision and file digests. It remains an unresolved template and fails
-conformance by design. The public reference repository does not contain Gemini
-production keys, so this template and the tournament fixture do not provide
-Gemini production detection.
+revision and the exact source files used for hashing, masking, and scoring. Its
+sealer binds one local tokenizer snapshot, opaque key ID, owner-managed key
+file, masking/generation configuration, score definition, effective-length
+interval, and public threshold-evidence record. The executable adapter supports
+mean and explicit weighted-mean scoring plus bounded token-to-character
+contribution ranges for guided candidate generation.
+
+The checked-in vectors establish only same-implementation conformance. Every
+newly sealed capability remains uncalibrated and non-independent, and the
+public research repository does not contain Gemini or Claude production keys
+or configuration. The pack and tournament fixture therefore provide neither
+vendor production detection nor verified vendor-watermark removal.
 
 ## Process boundary
 

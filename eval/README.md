@@ -103,7 +103,7 @@ dewatermark-eval --schemes KGW,Unigram,EXP \
 
 Runs stop on sample failure by default. `--failure-policy continue` records
 closed, host-defined failure codes without persisting provider messages or
-adapter-supplied labels. Aggregation-contract 1.1 rejects any other
+adapter-supplied labels. Strict aggregation contracts 1.1 and 1.2 reject any other
 `error_class`; unmarked legacy v1 observations retain their open-token
 compatibility but are not statistically verified. Every checkpoint event
 has a content-addressed run identity over arguments, prompts, the complete
@@ -135,11 +135,11 @@ immutable revision and retain it in the generated manifest.
 
 `dewatermark-eval` is an exploratory generator runner. The stricter evidence
 path is `dewatermark-evidence`, backed by the canonical
-`protocol-registry-v1.json` and four public JSON schemas. It does not import a
+`protocol-registry-v1.json` and versioned public JSON schemas. It does not import a
 detector or touch a model while validating or aggregating.
 
 The `run` subcommand connects execution to that strict evidence path. It uses
-the checked-in KGW preregistration and frozen comparator registry, generates
+the checked-in KGW or SynthID Text preregistration and frozen comparator registry, generates
 matched marked/unmarked samples through an adapter, runs every registered
 condition and named detector, applies quality and task checks, and creates the
 sample registry, observations, aggregate, checkpoint, and evidence bundle in
@@ -147,15 +147,17 @@ one command:
 
 ```bash
 dewatermark-evidence run \
+  --protocol-manifest protocols/synthid-v1.json \
   --run-config private-run-config.json \
   --input-corpus private-input-corpus.json \
-  --output-directory evidence/kgw-run
+  --output-directory evidence/synthid-run
 
 # Continue only the exact same scientific run after interruption.
 dewatermark-evidence run \
+  --protocol-manifest protocols/synthid-v1.json \
   --run-config private-run-config.json \
   --input-corpus private-input-corpus.json \
-  --output-directory evidence/kgw-run \
+  --output-directory evidence/synthid-run \
   --resume
 ```
 
@@ -164,12 +166,14 @@ adapter contracts. The command never writes raw prompts or generated text to
 the checkpoint or public artifacts. Network and model acquisition remain off
 unless their separate flags are supplied.
 
-New runs set `aggregation_contract_version: "1.1"`. It commits the bootstrap settings and
-optional comparator registry, then `verify` deterministically recomputes the
-public aggregate from the bound sample and observation artifacts. A successful
-verification reports `aggregate_verified: true`. Legacy unmarked v1 bundles
-can remain structurally and content-address valid, but report
-`aggregate_verified: false` and cannot establish a verified aggregate claim.
+New real-adapter runs set `aggregation_contract_version: "1.2"`. It adds the
+preregistered watermark family to the 1.1 bootstrap, comparator, sample,
+observation, and result commitments. `verify` deterministically recomputes the
+public aggregate for both the v0.7 1.1 contract and the family-bound 1.2
+contract; a successful verification reports `aggregate_verified: true`.
+Unmarked legacy v1 bundles can remain structurally and content-address valid,
+but report `aggregate_verified: false` and cannot establish a verified
+aggregate claim.
 
 The run config uses explicit argv arrays, private split-specific key-slot
 handles, and independent CSPRNG-generated public key-partition IDs. A public ID

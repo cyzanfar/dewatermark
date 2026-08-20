@@ -31,6 +31,7 @@ SCHEMA_FILES = {
     "detector-capability-v1.json",
     "evidence-receipt-v1.json",
     "localization-result-v1.json",
+    "mitigation-profile-v1.json",
     "mitigation-result-v1.json",
     "openapi-v1.json",
     "removal-result-v1.json",
@@ -56,7 +57,14 @@ ADAPTER_PACK_FILES = {
     "kgw/README.md",
     "kgw/seal_operator.py",
     "synthid/adapter-manifest.template.json",
+    "synthid/conformance.py",
+    "synthid/fixture-cases.json",
+    "synthid/operator_adapter.py",
     "synthid/README.md",
+    "synthid/seal_operator.py",
+    "synthid/threshold-evidence.template.json",
+    "synthid/upstream-conformance-record.json",
+    "synthid/upstream_conformance.py",
     "unigram/README.md",
     "unigram/build_natural_profile.py",
     "unigram/green-mask-v1.json",
@@ -127,6 +135,7 @@ def test_wheel_contains_agent_skill_and_declared_extras() -> None:
         assert ADAPTER_PACK_FILES <= packaged_adapters
         assert "dewatermark_eval/PROTOCOL_RUN.md" in names
         assert "dewatermark_eval/requirements.txt" in names
+        assert "dewatermark_eval/protocols/synthid-v1.json" in names
         assert "dewatermark/data/reference-detector-vectors-v1.json" in names
         assert "dewatermark/py.typed" in names
         metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
@@ -160,3 +169,4 @@ def test_sdist_contains_agent_skill_and_security_policy() -> None:
     assert any(name.endswith("/SECURITY.md") for name in names)
     assert any(name.endswith("/eval/PROTOCOL_RUN.md") for name in names)
     assert any(name.endswith("/eval/requirements.txt") for name in names)
+    assert any(name.endswith("/eval/protocols/synthid-v1.json") for name in names)

@@ -149,6 +149,14 @@ transformer wrapped by `registered_strategy()`, or a bounded
 current primary-detector result and optional source ranges. It returns candidate
 strings only. The optimizer decides whether any candidate is safe to use.
 
+`context_aware_strategy()` is the built-in local option for native attribution.
+It proposes a bounded sequence of small English lexical edits at, or within a
+configurable number of tokens of, supplied signal spans. Its configuration and
+fixed lexicon revision are bound into its capability identity. It returns no
+candidates when spans or supported edits are absent, and it has no acceptance
+path of its own: central quality gates, primary clearance, and an independent
+held-out verifier remain mandatory.
+
 Use the command strategy for tools with separate or conflicting dependencies.
 It uses immutable argv, no shell, a small environment, a versioned JSON request,
 bounded output, and redacted failures. The executable is still trusted code;

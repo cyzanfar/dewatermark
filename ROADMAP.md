@@ -2,6 +2,17 @@
 
 dewatermark aims to be the most trustworthy open-source toolkit for inspecting and mitigating text watermark artifacts—not the loudest universal-removal claim.
 
+## Released in v0.8.0
+
+- Operator-scoped mitigation profiles that bind detector/verifier identities,
+  candidate strategies, required quality policy, seeds, limits, and the
+  preregistered protocol identity without carrying keys or paths
+- An executable operator-sealed SynthID Text public-research adapter with
+  bounded native contribution spans, a deterministic span-guided minimal-edit
+  strategy, and a frozen SynthID benchmark preregistration
+- Command-detector wire protocol 1.2 attribution, kept additive so existing
+  1.0 and 1.1 command adapters continue receiving their original requests
+
 ## Released in v0.7.0
 
 - Request-scoped detector sessions, bounded signal localization, and a

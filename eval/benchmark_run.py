@@ -239,8 +239,8 @@ def _load_protocol_manifest(path: Path, comparator_registry: Mapping[str, Any]) 
     if value.get("classification") != "real_protocol_preregistration_no_results":
         raise BenchmarkRunError("protocol manifest is not a real-run preregistration")
     _require_id(value.get("protocol_id"), "protocol_id")
-    if value.get("watermark_family") != "kgw":
-        raise BenchmarkRunError("this runner manifest must pre-register KGW")
+    if value.get("watermark_family") not in {"kgw", "synthid_text"}:
+        raise BenchmarkRunError("this runner manifest uses an unsupported watermark family")
     if value.get("protocol_registry_sha256") != registry_sha256():
         raise BenchmarkRunError("protocol manifest is bound to another protocol registry")
     if value.get("comparator_registry_sha256") != comparator_registry_sha256(comparator_registry):
@@ -1408,6 +1408,13 @@ def run_benchmark(
         allow_network=allow_network,
         allow_model_download=allow_model_download,
     )
+    if not config["classification"].startswith("synthetic_"):
+        expected_family = protocol_manifest["watermark_family"]
+        detector_adapters = [adapters["generator"], *adapters["cross"]]
+        if any(adapter.family != expected_family for adapter in detector_adapters):
+            raise BenchmarkRunError(
+                "real detector adapters do not match the preregistered watermark family"
+            )
     public_group_ids = [
         adapters["generator"].name,
         *(adapter.name for adapter in adapters["cross"]),
@@ -2052,11 +2059,12 @@ def run_benchmark(
         execution.reserve_cancellation_check()
     run_manifest = {
         "schema_version": "1.0",
-        "aggregation_contract_version": "1.1",
+        "aggregation_contract_version": "1.2",
         "bootstrap_replicates_count": bootstrap_replicates,
         "bootstrap_seed_count": bootstrap_seed,
         "classification": config["classification"],
         "protocol_id": protocol_manifest["protocol_id"],
+        "watermark_family": protocol_manifest["watermark_family"],
         "run_id": run_id,
         "protocol_manifest_sha256": scientific_identity["protocol_manifest_sha256"],
         "comparator_registry_sha256": scientific_identity["comparator_registry_sha256"],

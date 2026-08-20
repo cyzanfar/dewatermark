@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "synthid-text-removal-benchmark-v1",
+  "classification": "real_protocol_preregistration_no_results",
+  "watermark_family": "synthid_text",
+  "protocol_registry_sha256": "3eb8324d23db2f1c2845ad21441cef161fad74ee28b9dd91d9fa26bc4b855e68",
+  "comparator_registry_sha256": "265e1e71b08bd0d70b724cc886bdc48919686aa72bc845bf671b7fae60dbf99f",
+  "requested_fprs": [0.01, 0.001],
+  "sample_design": {
+    "split_ids": ["calibration", "development", "final_test"],
+    "cohort_ids": ["watermarked_positive", "matched_generator_null", "human_control"],
+    "task_ids": [
+      "open_ended_prose",
+      "factual_qa",
+      "summarization",
+      "translation",
+      "code",
+      "mathematics",
+      "structured_data"
+    ],
+    "language_ids": ["en", "es", "ar", "hi", "zh-Hans", "ko"],
+    "length_bin_ids": ["lt64", "64_127", "128_255", "256_511", "512_plus"],
+    "split_disjoint_keys_required": true,
+    "matched_decoding_required": true,
+    "human_controls_required": true,
+    "detector_effective_lengths_required": true
+  },
+  "analysis": {
+    "primary_endpoint": "detector_scoped_gate_success_rate_over_all_attempts",
+    "threshold_source": "disjoint_calibration_matched_generator_nulls",
+    "uncertainty_unit": "prompt_or_document_cluster",
+    "multiple_comparison_method": "holm_bonferroni_cluster_paired_sign_test",
+    "comparison_control_condition_id": "no_attack"
+  },
+  "execution_requirements": {
+    "primary_detector_bound_to_generator_configuration": true,
+    "cross_detector_required": true,
+    "quality_and_task_checks_required": true,
+    "failure_and_abstention_denominator": "all_attempts",
+    "content_free_public_artifacts": true,
+    "network_requires_explicit_opt_in": true,
+    "model_download_requires_explicit_opt_in": true,
+    "private_key_slot_echo_required": true,
+    "exact_pair_seed_required": true,
+    "exact_pair_decoding_commitment_required": true,
+    "static_cross_detector_alias_rejection_required": true,
+    "cluster_level_paired_inference_required": true,
+    "hash_chained_checkpoint_required": true,
+    "run_wide_budgets_required": true
+  }
+}

@@ -12,7 +12,7 @@ pipx run dewatermark sanitize < input.txt
 ```yaml
 repos:
   - repo: https://github.com/cyzanfar/text-watermark-remover
-    rev: v0.7.0
+    rev: v0.8.0
     hooks:
       - id: dewatermark-check
 ```
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: cyzanfar/text-watermark-remover@v0.7.0
+      - uses: cyzanfar/text-watermark-remover@v0.8.0
         with:
           paths: |
             .
@@ -46,7 +46,7 @@ jobs:
           sarif_file: dewatermark.sarif
 ```
 
-Use `v0.7.0` to follow this release; pin a full commit SHA when your threat
+Use `v0.8.0` to follow this release; pin a full commit SHA when your threat
 model requires an immutable third-party action. The `paths` input is
 newline-delimited, treats every line as a literal path, and cannot inject
 scanner options.
@@ -106,10 +106,10 @@ The container runs as an unprivileged user. Its safe default prints local
 capabilities and exits instead of exposing an unauthenticated service.
 
 The release workflow publishes images to the GitHub Container Registry with
-provenance and an SPDX SBOM. For version `0.7.0`:
+provenance and an SPDX SBOM. For version `0.8.0`:
 
 ```bash
-docker pull ghcr.io/cyzanfar/text-watermark-remover:0.7.0
+docker pull ghcr.io/cyzanfar/text-watermark-remover:0.8.0
 ```
 
 ## Editor integrations

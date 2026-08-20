@@ -8,6 +8,7 @@
   stable CLI name.
 - `removal_result_schema()`, `evidence_receipt_schema()`,
   `localization_result_schema()`, `mitigation_result_schema()`,
+  `mitigation_profile_schema()`,
   `detector_capability_schema()`, `command_detector_schema()`, and
   `command_strategy_schema()`: core version-1 contracts.
 - `analyze(text) -> dict`: versioned Unicode forensic report.
@@ -33,7 +34,7 @@
   records.
 
 `dewatermark schema --kind NAME` accepts `removal-result`, `evidence-receipt`,
-`localization-result`, `mitigation-result`, `detector-capability`,
+`localization-result`, `mitigation-result`, `mitigation-profile`, `detector-capability`,
 `command-detector`, `command-strategy`, `benchmark-sample-registry`,
 `benchmark-observation-set`, `benchmark-evidence-bundle`,
 `benchmark-replication-record`, `benchmark-comparator-registry`,
@@ -62,10 +63,20 @@ retrieve it as `openapi_document()` or `public_schema("openapi")`.
 - `mitigate(text, primary_detector, strategies, *, verifier_detectors=(),
   config=None, limits=None, source_localization=()) -> MitigationResult`:
   run deterministic, quality-gated candidate search with exact rollback.
+- `build_mitigation_profile(...)`, `load_mitigation_profile(path)`, and
+  `inspect_mitigation_profile(...)`: bind and audit one exact component,
+  quality, seed, budget, and preregistered-protocol configuration without
+  loading plugins.
+- `mitigate_with_profile(text, profile, consent=True, config=None)`: pin the
+  exact reviewed components and run them through the same central acceptance
+  path. Profile v1 records protocol identity only and cannot attach result
+  evidence or promote an aggregate claim.
 - `SearchLimits`: bound rounds, beam width, candidates, transform calls,
   detector queries, candidate characters, and final verification attempts.
 - `CandidateStrategy`, `CandidateProposal`, `StrategyBinding`, and
   `StrategyContext`: build in-process candidate generators.
+- `ContextAwareMinimalEditStrategy` and `context_aware_strategy(...)`: propose
+  deterministic, bounded lexical edits near detector-supplied signal spans.
 - `registered_strategy(name, config=None)`: adapt a registered transformer for
   detector-guided search.
 - `CommandStrategy`, `command_strategy_manifest()`,
@@ -133,6 +144,9 @@ dewatermark mitigate --input source.txt \
 limit, and separate network/model-download permissions. `mitigate` also accepts
 round, beam, candidate, transform-call, detector-query, and verification limits.
 Repeat `--verifier` or `--strategy` to provide more than one.
+Alternatively, `dewatermark profiles inspect PROFILE`, `profiles doctor
+PROFILE`, and `mitigate --profile PROFILE --consent` use one content-addressed
+operator profile. See [Mitigation profiles](MITIGATION_PROFILES.md).
 
 HTTP uses `POST /localize` and `POST /mitigate`. `/mitigate` requires a consent
 object:

@@ -2,10 +2,12 @@ import json
 
 import dewatermark
 from dewatermark.detector_tools import (
+    DetectorInventoryEntry,
     conform_reference_detectors,
     discover_detector_capabilities,
     doctor_detectors,
 )
+from dewatermark.models import CapabilityManifest
 from dewatermark.reference_detectors import (
     KGWReferenceDetector,
     TournamentReferenceDetector,
@@ -79,3 +81,26 @@ def test_detector_inventory_and_doctor_are_static_and_explicit():
     assert report.passed
     assert report.to_dict()["side_effect_free"] is True
     assert any(check.check == "fixture_claim_boundary" for check in report.checks)
+
+
+def test_detector_inventory_does_not_publish_legacy_attribution_collisions():
+    private = "confidential-merger-codename-zephyr"
+    entry = DetectorInventoryEntry(
+        identifier="legacy-command-attribution-collision",
+        aliases=("legacy-command-attribution-collision",),
+        status="ready",
+        capability=CapabilityManifest(
+            identifier="legacy-command-attribution-collision",
+            kind="detector",
+            schemes=("test",),
+            metadata={
+                "command_protocol_version": "1.1",
+                "attribution_kind": "token_character_spans",
+                "maximum_attributions": private,
+            },
+        ),
+    )
+    payload = entry.to_dict()
+    assert "attribution_kind" not in payload["capability"]["metadata"]
+    assert "maximum_attributions" not in payload["capability"]["metadata"]
+    assert private not in json.dumps(payload)

@@ -515,11 +515,26 @@
         "quality": {"type": "object"},
         "trace": {"type": "array", "items": {"$ref": "#/$defs/traceEvent"}},
         "resources": {"type": "object"},
+        "profile_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@/+\\-]*$"
+        },
+        "profile_sha256": {"$ref": "#/$defs/sha256"},
         "claim_scope": {
           "const": "Clearance is limited to the named detector configurations; no authorship or universal watermark inference is made."
         }
       },
       "allOf": [
+        {
+          "if": {"required": ["profile_id"]},
+          "then": {"required": ["profile_sha256"]}
+        },
+        {
+          "if": {"required": ["profile_sha256"]},
+          "then": {"required": ["profile_id"]}
+        },
         {
           "if": {"properties": {"status": {"const": "verified"}}, "required": ["status"]},
           "then": {

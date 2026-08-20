@@ -115,6 +115,7 @@ _PUBLIC_MANIFEST_FIELDS = {
     "version",
     "network_allowed",
     "model_download_allowed",
+    "watermark_family",
 }
 _PUBLIC_MANIFEST_SUFFIXES = (
     "_sha256",
@@ -145,7 +146,8 @@ _PUBLIC_RESULT_FIELDS = {
     "coverage",
     "resource_telemetry",
 }
-_AGGREGATION_CONTRACT_VERSION = "1.1"
+_AGGREGATION_CONTRACT_VERSION = "1.2"
+_SUPPORTED_AGGREGATION_CONTRACT_VERSIONS = frozenset({"1.1", "1.2"})
 _STRICT_AGGREGATE_RESULT_FIELDS = {
     "schema_version",
     "classification",
@@ -942,8 +944,10 @@ def _validate_public_observation_artifact(value: dict[str, Any]) -> None:
         raise EvidenceValidationError("observation-set content digest mismatch")
     run_manifest = value.get("run_manifest")
     _validate_public_manifest(run_manifest)
-    strict_aggregate = (
-        type(run_manifest) is dict and run_manifest.get("aggregation_contract_version") == "1.1"
+    strict_aggregate = bool(
+        type(run_manifest) is dict
+        and run_manifest.get("aggregation_contract_version")
+        in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS
     )
     detectors = value.get("detectors")
     if type(detectors) is not list or not detectors:
@@ -1240,9 +1244,15 @@ def _read_bounded_file(path: Path, limit: int, error: str) -> bytes:
     """Read one regular-file snapshot without a stat/read allocation race."""
     descriptor = -1
     try:
-        if path.is_symlink():
+        initial = os.lstat(path)
+        if not stat.S_ISREG(initial.st_mode) or initial.st_size > limit:
             raise EvidenceValidationError(error)
-        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
         descriptor = os.open(path, flags)
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
@@ -1774,9 +1784,12 @@ def _validate_bundle_artifact_graph(
     contract_version = (
         manifest.get("aggregation_contract_version") if type(manifest) is dict else None
     )
-    if contract_version not in {None, _AGGREGATION_CONTRACT_VERSION}:
+    if contract_version is not None and (
+        contract_version not in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS
+    ):
         raise EvidenceValidationError("bundle aggregation contract is unsupported")
-    strict_aggregate = contract_version == _AGGREGATION_CONTRACT_VERSION
+    strict_aggregate = contract_version in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS
+    family_bound_aggregate = contract_version == _AGGREGATION_CONTRACT_VERSION
     if strict_aggregate:
         expected_fields = set(_STRICT_AGGREGATE_RESULT_FIELDS)
         if "comparative_analysis" in results:
@@ -1890,6 +1903,66 @@ def _validate_bundle_artifact_graph(
         observation_report = validate_observation_set(observation_set, sample_registry)
     except (ObservationValidationError, ProtocolValidationError, ValueError):
         raise EvidenceValidationError("bundle benchmark artifact graph is inconsistent") from None
+    if strict_aggregate:
+        run_classification = manifest.get("classification")
+        sample_classification = sample_registry.get("registry_classification")
+        synthetic_classification = "synthetic_harness_fixture_not_performance_evidence"
+        fixture_marker = manifest.get("fixture_sha256")
+        synthetic_sample_marker = any(
+            type(sample) is dict
+            and type(sample.get("metadata")) is dict
+            and sample["metadata"].get("generator_id") == "synthetic-protocol-fixture-v1"
+            for sample in sample_registry.get("samples", [])
+        )
+        synthetic_detector_marker = any(
+            type(detector) is dict
+            and type(detector.get("manifest")) is dict
+            and (
+                detector["manifest"].get("implementation")
+                == "deterministic-synthetic-score-fixture"
+                or any(
+                    limitation in {"not_a_watermark_detector", "not_performance_evidence"}
+                    for limitation in detector["manifest"].get("limitations", [])
+                    if type(limitation) is str
+                )
+            )
+            for detector in observation_set.get("detectors", [])
+        )
+        if run_classification == synthetic_classification:
+            if (
+                sample_classification != synthetic_classification
+                or bundle.get("purpose") not in {"harness_conformance", "exploratory"}
+                or (
+                    fixture_marker is not None
+                    and (type(fixture_marker) is not str or not _SHA256.fullmatch(fixture_marker))
+                )
+            ):
+                raise EvidenceValidationError(
+                    "bundle sample and run classifications are inconsistent"
+                )
+        elif run_classification == "detector_scoped_real_adapter_benchmark":
+            detector_families_bound = True
+            if family_bound_aggregate:
+                watermark_family = manifest.get("watermark_family")
+                detector_families_bound = watermark_family in {"kgw", "synthid_text"} and all(
+                    type(detector) is dict
+                    and type(detector.get("manifest")) is dict
+                    and detector["manifest"].get("family") == watermark_family
+                    for detector in observation_set.get("detectors", [])
+                )
+            if (
+                sample_classification is not None
+                or fixture_marker is not None
+                or synthetic_sample_marker
+                or synthetic_detector_marker
+                or not detector_families_bound
+                or bundle.get("purpose") == "harness_conformance"
+            ):
+                raise EvidenceValidationError(
+                    "bundle sample and run classifications are inconsistent"
+                )
+        else:
+            raise EvidenceValidationError("bound aggregate run classification is unsupported")
     if (
         sample_descriptor.get("canonical_sha256") != sample_report["sample_registry_sha256"]
         or sample_report["sample_registry_sha256"] != expected_sample_digest
@@ -2063,7 +2136,7 @@ def validate_bundle(
             verify_artifacts
             and isinstance(bundle.get("manifest"), Mapping)
             and bundle["manifest"].get("aggregation_contract_version")
-            == _AGGREGATION_CONTRACT_VERSION
+            in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS
         ),
         "artifact_count": len(bundle["artifacts"]),
     }
@@ -2668,10 +2741,12 @@ def main() -> None:
                 raise EvidenceValidationError("observation run manifest is invalid")
             _validate_public_manifest(manifest)
             contract_version = manifest.get("aggregation_contract_version")
-            if contract_version not in {None, _AGGREGATION_CONTRACT_VERSION}:
+            if contract_version is not None and (
+                contract_version not in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS
+            ):
                 raise EvidenceValidationError("observation aggregation contract is unsupported")
 
-            if contract_version == _AGGREGATION_CONTRACT_VERSION:
+            if contract_version in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS:
                 manifest_replicates = manifest.get("bootstrap_replicates_count")
                 manifest_seed = manifest.get("bootstrap_seed_count")
                 if (
@@ -2698,7 +2773,7 @@ def main() -> None:
 
             declared_comparator_digest = manifest.get("comparator_registry_sha256")
             comparator_registry = None
-            if contract_version == _AGGREGATION_CONTRACT_VERSION and (
+            if contract_version in _SUPPORTED_AGGREGATION_CONTRACT_VERSIONS and (
                 (declared_comparator_digest is None) != (args.comparator_registry is None)
             ):
                 raise EvidenceValidationError(

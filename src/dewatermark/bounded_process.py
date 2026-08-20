@@ -461,6 +461,7 @@ def _validated_invocation(
     environment: Mapping[str, str],
     working_directory: Optional[os.PathLike[str] | str],
     checkpoint: Optional[Callable[[], None]],
+    before_input: Optional[Callable[[], None]],
     cleanup_seconds: float,
 ) -> tuple[dict[str, str], Optional[str]]:
     """Validate untrusted launch metadata without reflecting any of it."""
@@ -492,6 +493,8 @@ def _validated_invocation(
                 raise ValueError
         if checkpoint is not None and not callable(checkpoint):
             raise TypeError
+        if before_input is not None and not callable(before_input):
+            raise TypeError
         normalized_environment = dict(environment)
         if any(
             type(key) is not str
@@ -522,6 +525,7 @@ def run_bounded_process(
     environment: Mapping[str, str],
     working_directory: Optional[os.PathLike[str] | str] = None,
     checkpoint: Optional[Callable[[], None]] = None,
+    before_input: Optional[Callable[[], None]] = None,
     cleanup_seconds: float = 1.0,
 ) -> BoundedProcessResult:
     """Execute immutable argv with bounded time, output, and pipe cleanup.
@@ -542,6 +546,7 @@ def run_bounded_process(
         environment,
         working_directory,
         checkpoint,
+        before_input,
         cleanup_seconds,
     )
     popen_options: dict[str, Any] = {
@@ -580,6 +585,29 @@ def run_bounded_process(
             except (OSError, ValueError):
                 pass
         raise BoundedProcessFailure("launch_failed") from None
+    if before_input is not None:
+        try:
+            # The child exists and is under process-tree ownership, but no
+            # source bytes have been handed to it yet. Command adapters use
+            # this point for their final exact-code drift check.
+            before_input()
+        except BaseException:
+            tree.terminate()
+            try:
+                process.wait(timeout=cleanup_seconds)
+            except subprocess.TimeoutExpired:
+                tree.terminate()
+                try:
+                    process.wait(timeout=cleanup_seconds)
+                except subprocess.TimeoutExpired:
+                    pass
+            tree.close()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+            raise
     overflow_event = Event()
     io_stop_event = Event()
     stdout = _StreamCapture(max_stdout_bytes, retain=True)

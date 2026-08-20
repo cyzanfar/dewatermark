@@ -20,11 +20,12 @@ import os
 import re
 import shutil
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Optional, Sequence, cast
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence, cast
 
 from .bounded_process import BoundedProcessFailure, run_bounded_process
 from .command_safety import (
     command_code_identity_sha256,
+    command_code_raw_identity_sha256,
     validate_public_command,
     validate_public_json,
 )
@@ -38,15 +39,17 @@ from .request_context import (
     request_scope,
 )
 
-COMMAND_DETECTOR_PROTOCOL_VERSION = "1.1"
+COMMAND_DETECTOR_PROTOCOL_VERSION = "1.2"
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_STDOUT_BYTES = 64 * 1024
 DEFAULT_MAX_STDERR_BYTES = 16 * 1024
 _MAX_CAPTURE_BYTES = 16 * 1024 * 1024
+_MAX_ATTRIBUTIONS = 4096
 
 ScoreDirection = Literal["higher", "lower"]
 ThresholdOperator = Literal[">", ">=", "<", "<="]
 SecretBinding = Literal["operator_managed_file"]
+AttributionKind = Literal["token_character_spans"]
 _PROTOCOL_RE = re.compile(r"^[0-9]+\.[0-9]+$")
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _LOWERCASE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -63,7 +66,9 @@ _COMMAND_METADATA_FIELDS = frozenset(
     {
         "command_protocol_version",
         "configuration_sha256",
+        "attribution_kind",
         "implementation_sha256",
+        "maximum_attributions",
         "minimum_effective_tokens",
         "score_direction",
         "secret_binding",
@@ -156,6 +161,67 @@ def _nonnegative_integer(value: Any, field_name: str) -> int:
     return value
 
 
+def _normalize_attributions(
+    value: Any,
+    text: str,
+    *,
+    maximum_attributions: int,
+    effective_tokens: int,
+) -> list[dict[str, Any]]:
+    """Validate content-free token offsets without reflecting command output."""
+    if type(value) is not list:
+        raise CommandDetectorContractError("detector response attributions must be a list")
+    if len(value) > maximum_attributions or len(value) > effective_tokens:
+        raise CommandDetectorContractError("detector response exceeds its attribution limit")
+    allowed_fields = {"start", "end", "score", "p_value", "threshold"}
+    normalized: list[dict[str, Any]] = []
+    previous_end = 0
+    for index, raw in enumerate(value):
+        if type(raw) is not dict or set(raw) - allowed_fields:
+            raise CommandDetectorContractError(
+                "detector response attribution contains unsupported fields"
+            )
+        if not {"start", "end", "score"}.issubset(raw):
+            raise CommandDetectorContractError(
+                "detector response attribution is missing required fields"
+            )
+        start = raw["start"]
+        end = raw["end"]
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or start < 0
+            or end <= start
+            or end > len(text)
+        ):
+            raise CommandDetectorContractError("detector response attribution range is invalid")
+        if index and start < previous_end:
+            raise CommandDetectorContractError(
+                "detector response attributions must be ordered and non-overlapping"
+            )
+        if not any(not character.isspace() for character in text[start:end]):
+            raise CommandDetectorContractError(
+                "detector response attribution must identify a token-derived range"
+            )
+        item: dict[str, Any] = {
+            "start": start,
+            "end": end,
+            "score": _finite_number(raw["score"], "attribution score"),
+        }
+        if "p_value" in raw:
+            p_value = _finite_number(raw["p_value"], "attribution p_value")
+            if not 0 <= p_value <= 1:
+                raise CommandDetectorContractError(
+                    "detector response attribution p_value must be between 0 and 1"
+                )
+            item["p_value"] = p_value
+        if "threshold" in raw:
+            item["threshold"] = _finite_number(raw["threshold"], "attribution threshold")
+        normalized.append(item)
+        previous_end = end
+    return normalized
+
+
 def _protocol_major(value: Any, *, source: str) -> int:
     if not isinstance(value, str) or not _PROTOCOL_RE.fullmatch(value):
         raise CommandDetectorContractError(f"{source} protocol_version is invalid")
@@ -206,6 +272,8 @@ def command_detector_manifest(
     score_direction: ScoreDirection = "higher",
     threshold_operator: Optional[ThresholdOperator] = None,
     minimum_effective_tokens: int = 0,
+    attribution_kind: Optional[AttributionKind] = None,
+    maximum_attributions: int = 0,
     version: str = "1",
     description: str = "External detector using the bounded JSON command protocol.",
     network_required: bool = False,
@@ -245,6 +313,18 @@ def command_detector_manifest(
         or minimum_effective_tokens < 0
     ):
         raise ValueError("minimum_effective_tokens must be a non-negative integer")
+    if attribution_kind is not None and (
+        type(attribution_kind) is not str or attribution_kind != "token_character_spans"
+    ):
+        raise ValueError("attribution_kind must be 'token_character_spans' when supplied")
+    if isinstance(maximum_attributions, bool) or not isinstance(maximum_attributions, int):
+        raise TypeError("maximum_attributions must be an integer")
+    if attribution_kind is None and maximum_attributions != 0:
+        raise ValueError("maximum_attributions requires an attribution_kind")
+    if attribution_kind is not None and not 1 <= maximum_attributions <= _MAX_ATTRIBUTIONS:
+        raise ValueError(
+            f"maximum_attributions must be between 1 and {_MAX_ATTRIBUTIONS} when enabled"
+        )
     if isinstance(minimum_characters, bool) or not isinstance(minimum_characters, int):
         raise TypeError("minimum_characters must be an integer")
     if minimum_characters < 0:
@@ -254,6 +334,11 @@ def command_detector_manifest(
     if secret_binding is not None and not requires_secret:
         raise ValueError("secret_binding requires requires_secret=True")
     public_metadata = _public_metadata(metadata or {}, path="metadata")
+    if attribution_kind is not None and {
+        "attribution_kind",
+        "maximum_attributions",
+    }.intersection(public_metadata):
+        raise ValueError("metadata cannot override command-detector attribution fields")
     metadata_implementation = public_metadata.pop("implementation_sha256", None)
     if implementation_sha256 is not None and metadata_implementation is not None:
         if implementation_sha256 != metadata_implementation:
@@ -276,13 +361,20 @@ def command_detector_manifest(
     ):
         raise ValueError("watermark_target_sha256 must be a lowercase SHA-256 digest")
     reserved = {
-        "command_protocol_version": COMMAND_DETECTOR_PROTOCOL_VERSION,
+        # Keep existing commands on the exact 1.1 request they already
+        # understand. Attribution is the explicit negotiation boundary for 1.2.
+        "command_protocol_version": (
+            COMMAND_DETECTOR_PROTOCOL_VERSION if attribution_kind is not None else "1.1"
+        ),
         "configuration_sha256": fingerprint,
         "threshold": declared_threshold,
         "score_direction": score_direction,
         "threshold_operator": declared_operator,
         "minimum_effective_tokens": minimum_effective_tokens,
     }
+    if attribution_kind is not None:
+        reserved["attribution_kind"] = attribution_kind
+        reserved["maximum_attributions"] = maximum_attributions
     if implementation is not None:
         reserved["implementation_sha256"] = implementation
     if secret_binding is not None:
@@ -335,6 +427,8 @@ class _DetectorContract:
     implementation_sha256: Optional[str]
     watermark_target_sha256: Optional[str]
     minimum_effective_tokens: int
+    attribution_kind: Optional[AttributionKind]
+    maximum_attributions: int
 
 
 def _contract_from_manifest(capability: CapabilityManifest) -> _DetectorContract:
@@ -358,7 +452,11 @@ def _contract_from_manifest(capability: CapabilityManifest) -> _DetectorContract
         COMMAND_DETECTOR_PROTOCOL_VERSION, source="runtime"
     ):
         raise CommandDetectorContractError("manifest uses an incompatible command protocol")
-    modern_contract = _protocol_minor(version, source="manifest") >= 1
+    protocol_minor = _protocol_minor(version, source="manifest")
+    if protocol_minor > _protocol_minor(COMMAND_DETECTOR_PROTOCOL_VERSION, source="runtime"):
+        raise CommandDetectorContractError("manifest uses an unsupported command protocol minor")
+    modern_contract = protocol_minor >= 1
+    attribution_contract = protocol_minor >= 2
     fingerprint = _validate_fingerprint(metadata.get("configuration_sha256"), source="manifest")
     threshold = _finite_number(metadata.get("threshold"), "manifest threshold")
     direction = metadata.get("score_direction")
@@ -406,6 +504,32 @@ def _contract_from_manifest(capability: CapabilityManifest) -> _DetectorContract
         raise CommandDetectorContractError(
             "manifest implementation_sha256 must be a lowercase SHA-256 digest"
         )
+    raw_attribution_kind = metadata.get("attribution_kind") if attribution_contract else None
+    if attribution_contract and raw_attribution_kind is None:
+        raise CommandDetectorContractError(
+            "manifest attribution_kind is required by command protocol 1.2"
+        )
+    if raw_attribution_kind is not None and (
+        type(raw_attribution_kind) is not str or raw_attribution_kind != "token_character_spans"
+    ):
+        raise CommandDetectorContractError("manifest attribution_kind is unsupported")
+    raw_maximum_attributions = metadata.get("maximum_attributions") if attribution_contract else 0
+    if raw_attribution_kind is None:
+        if raw_maximum_attributions not in (None, 0):
+            raise CommandDetectorContractError(
+                "manifest maximum_attributions requires an attribution_kind"
+            )
+        maximum_attributions = 0
+    elif (
+        isinstance(raw_maximum_attributions, bool)
+        or not isinstance(raw_maximum_attributions, int)
+        or not 1 <= raw_maximum_attributions <= _MAX_ATTRIBUTIONS
+    ):
+        raise CommandDetectorContractError(
+            f"manifest maximum_attributions must be between 1 and {_MAX_ATTRIBUTIONS}"
+        )
+    else:
+        maximum_attributions = raw_maximum_attributions
     return _DetectorContract(
         protocol_version=cast(str, version),
         configuration_sha256=fingerprint,
@@ -417,6 +541,8 @@ def _contract_from_manifest(capability: CapabilityManifest) -> _DetectorContract
         implementation_sha256=implementation,
         watermark_target_sha256=target,
         minimum_effective_tokens=minimum_tokens,
+        attribution_kind=cast(Optional[AttributionKind], raw_attribution_kind),
+        maximum_attributions=maximum_attributions,
     )
 
 
@@ -445,6 +571,7 @@ def _run_bounded_command(
     timeout_seconds: float,
     max_stdout_bytes: int,
     max_stderr_bytes: int,
+    before_input: Optional[Callable[[], None]] = None,
 ) -> bytes:
     """Run argv directly through the shared process-tree boundary."""
 
@@ -462,6 +589,7 @@ def _run_bounded_command(
             max_stderr_bytes=max_stderr_bytes,
             environment=_command_environment(),
             checkpoint=checkpoint,
+            before_input=before_input,
         )
     except BoundedProcessFailure as exc:
         if exc.kind == "launch_failed":
@@ -539,6 +667,10 @@ class CommandDetector:
         self._timeout_seconds = float(timeout_seconds)
         self._max_stdout_bytes = max_stdout_bytes
         self._max_stderr_bytes = max_stderr_bytes
+        # Set only by a consented, content-addressed mitigation profile. The
+        # host wrapper rechecks this digest immediately before launching the
+        # external command so code drift cannot receive detector text.
+        self._profile_command_code_raw_sha256: Optional[str] = None
         # Compatibility for code that reads a detector threshold directly.
         self.threshold = self._contract.threshold
 
@@ -555,6 +687,24 @@ class CommandDetector:
     def _verification_code_sha256(self) -> Optional[str]:
         """Return the current bounded executable/script identity for assurance."""
         return command_code_identity_sha256(self._command)
+
+    def _bind_profile_command_code_raw_sha256(self, expected: str) -> None:
+        """Bind one immutable profile-reviewed exact command-code expectation."""
+        if type(expected) is not str or _LOWERCASE_SHA256_RE.fullmatch(expected) is None:
+            raise CommandDetectorContractError("profile raw command-code identity is invalid")
+        current = object.__getattribute__(self, "_profile_command_code_raw_sha256")
+        if current is not None and current != expected:
+            raise CommandDetectorContractError("profile raw command-code identity is already bound")
+        object.__setattr__(self, "_profile_command_code_raw_sha256", expected)
+
+    def _assert_profile_command_code_raw(self) -> None:
+        """Fail closed before any exact-byte drift can receive text."""
+        expected = object.__getattribute__(self, "_profile_command_code_raw_sha256")
+        if expected is None:
+            return
+        current = command_code_raw_identity_sha256(object.__getattribute__(self, "_command"))
+        if current != expected:
+            raise CommandDetectorContractError("command detector code changed after profile review")
 
     def _static_evidence(
         self, text: str, status: DetectionStatus, reason: str
@@ -624,6 +774,10 @@ class CommandDetector:
     def detect(self, text: str) -> DetectionEvidence:
         if not isinstance(text, str):
             raise TypeError("command detector text must be a string")
+        # Use the exact host method rather than an instance shadow. This check
+        # performs bounded code-only I/O and happens before the subprocess is
+        # launched or the request payload is serialized.
+        CommandDetector._assert_profile_command_code_raw(self)
         context = current_request_context()
         if context is None:
             with request_scope(RequestContext.from_config(self._config)):
@@ -666,6 +820,11 @@ class CommandDetector:
             },
             "text": text,
         }
+        if self._contract.attribution_kind is not None:
+            request["attribution"] = {
+                "kind": self._contract.attribution_kind,
+                "maximum_attributions": self._contract.maximum_attributions,
+            }
         payload = json.dumps(
             request, ensure_ascii=True, sort_keys=True, separators=(",", ":")
         ).encode("ascii")
@@ -675,6 +834,7 @@ class CommandDetector:
             timeout_seconds=timeout,
             max_stdout_bytes=self._max_stdout_bytes,
             max_stderr_bytes=self._max_stderr_bytes,
+            before_input=lambda: CommandDetector._assert_profile_command_code_raw(self),
         )
         evidence = self._normalize_response(_decode_response(output), text)
         context.checkpoint()
@@ -688,10 +848,8 @@ class CommandDetector:
             raise CommandDetectorContractError(
                 "command detector returned an incompatible protocol version"
             )
-        if (
-            self._contract.threshold_operator_explicit
-            and _protocol_minor(response_version, source="response") < 1
-        ):
+        response_minor = _protocol_minor(response_version, source="response")
+        if self._contract.threshold_operator_explicit and response_minor < 1:
             raise CommandDetectorContractError(
                 "command detector response does not support the bound decision contract"
             )
@@ -723,17 +881,20 @@ class CommandDetector:
             raise CommandDetectorContractError(
                 "detector response score_direction must be 'higher' or 'lower'"
             )
+        # Protocol 1.0 metadata was deliberately open, so threshold_operator
+        # could already appear there (and in a forward-labelled response) as
+        # an unrelated extension. Only a statically negotiated 1.1+ contract
+        # may bind the response field. Legacy 1.0 keeps its inclusive default
+        # regardless of the response's compatible forward minor.
         raw_operator = (
             response.get("threshold_operator")
             if self._contract.threshold_operator_explicit
             else self._contract.threshold_operator
         )
         if raw_operator is None:
-            if self._contract.threshold_operator_explicit:
-                raise CommandDetectorContractError(
-                    "detector response threshold_operator is required by its static manifest"
-                )
-            raw_operator = self._contract.threshold_operator
+            raise CommandDetectorContractError(
+                "detector response threshold_operator is required by its negotiated contract"
+            )
         operator = _validate_threshold_operator(
             raw_operator,
             score_direction=cast(ScoreDirection, direction),
@@ -788,6 +949,21 @@ class CommandDetector:
                 text_characters=len(text),
                 reason="command detector output does not match its static capability manifest",
                 details=details,
+            )
+        if self._contract.attribution_kind is not None:
+            if response_minor < 2:
+                raise CommandDetectorContractError(
+                    "command detector response does not support the bound attribution contract"
+                )
+            if "attributions" not in response:
+                raise CommandDetectorContractError(
+                    "command detector response is missing its bound attributions"
+                )
+            details["localization"] = _normalize_attributions(
+                response["attributions"],
+                text,
+                maximum_attributions=self._contract.maximum_attributions,
+                effective_tokens=effective_tokens,
             )
         if status in ("detected", "not_detected"):
             assert score is not None
@@ -979,7 +1155,7 @@ def run_command_detector_conformance(
         )
     return DetectorConformanceReport(
         detector=detector.capability.identifier,
-        protocol_version=COMMAND_DETECTOR_PROTOCOL_VERSION,
+        protocol_version=detector._contract.protocol_version,
         cases=tuple(cases),
     )
 
@@ -1004,6 +1180,7 @@ def assert_command_detector_conformance(
 
 __all__ = [
     "COMMAND_DETECTOR_PROTOCOL_VERSION",
+    "AttributionKind",
     "CommandDetector",
     "CommandDetectorConformanceError",
     "CommandDetectorContractError",

@@ -314,6 +314,8 @@ class MitigationReceipt:
     quality: Mapping[str, Any]
     trace: tuple[SearchTraceEvent, ...]
     resources: Mapping[str, Any]
+    profile_id: Optional[str] = None
+    profile_sha256: Optional[str] = None
     claim_scope: str = _MITIGATION_CLAIM_SCOPE
     schema_version: str = "1.0"
 
@@ -336,6 +338,16 @@ class MitigationReceipt:
             or any(type(event) is not SearchTraceEvent for event in self.trace)
             or type(self.quality) is not dict
             or type(self.resources) is not dict
+            or (
+                self.profile_id is not None
+                and (
+                    type(self.profile_id) is not str
+                    or not self.profile_id
+                    or _public_identifier(self.profile_id) != self.profile_id
+                )
+            )
+            or (self.profile_sha256 is not None and not _is_sha256(self.profile_sha256))
+            or ((self.profile_id is None) != (self.profile_sha256 is None))
             or (
                 self.primary_before is not None
                 and type(self.primary_before) is not DetectorObservation
@@ -407,6 +419,8 @@ class MitigationReceipt:
             "quality": dict(self.quality),
             "trace": [event.to_dict() for event in self.trace],
             "resources": dict(self.resources),
+            "profile_id": self.profile_id,
+            "profile_sha256": self.profile_sha256,
             "claim_scope": self.claim_scope,
         }
         return {key: value for key, value in values.items() if value is not None}

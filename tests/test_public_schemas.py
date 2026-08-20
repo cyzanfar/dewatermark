@@ -225,10 +225,66 @@ def test_command_detector_request_and_response_validate_against_protocol_schema(
     legacy["protocol_version"] = "1.0"
     legacy["legacy_extension"] = {"adapter": "v0.6-compatible"}
     _validate(schema, legacy)
+    # A statically negotiated legacy detector may return a compatible forward
+    # minor while retaining its 1.0 inclusive operator default. The standalone
+    # response schema cannot see that manifest negotiation, so the echo remains
+    # optional just like forward attribution metadata.
+    _validate(schema, {**legacy, "protocol_version": "1.3"})
     for legacy_operator in (42, "<"):
         _validate(schema, {**legacy, "threshold_operator": legacy_operator})
-    wrong_edge = {**response, "threshold_operator": "<"}
-    assert not Draft202012Validator(schema).is_valid(wrong_edge)
+    # The response schema is deliberately structural: only the runtime has the
+    # static manifest needed to interpret or constrain extension-name echoes.
+    _validate(schema, {**response, "threshold_operator": "<"})
+
+    attribution_request = {
+        **request,
+        "protocol_version": "1.2",
+        "attribution": {
+            "kind": "token_character_spans",
+            "maximum_attributions": 32,
+        },
+    }
+    attribution_response = {
+        **response,
+        "protocol_version": "1.2",
+        "attributions": [{"start": 0, "end": 7, "score": 2.5, "p_value": 0.01, "threshold": 1.0}],
+    }
+    _validate(schema, attribution_request)
+    _validate(schema, attribution_response)
+    assert not Draft202012Validator(schema).is_valid(
+        {key: value for key, value in attribution_request.items() if key != "attribution"}
+    )
+    # A response can advertise a forward same-major minor to a 1.0/1.1
+    # request, so the standalone schema cannot know whether attribution was
+    # negotiated. The runtime requires it for every bound 1.2 contract.
+    _validate(
+        schema,
+        {key: value for key, value in attribution_response.items() if key != "attributions"},
+    )
+    _validate(
+        schema,
+        {
+            **attribution_response,
+            "attributions": [{"start": 0, "end": 7, "score": 2.5, "text": "private text"}],
+        },
+    )
+    assert not Draft202012Validator(schema).is_valid(
+        {**attribution_request, "attribution": {"kind": "token_character_spans"}}
+    )
+    # Before 1.2, the new names remain unknown extension data and are ignored.
+    _validate(schema, {**response, "attributions": {"text": "legacy extension"}})
+    # Forward-minor labels can collide with extension names from an older
+    # negotiated manifest. Published v1 accepted these values; runtime context,
+    # not the standalone schema, decides whether they form a bound contract.
+    _validate(
+        schema,
+        {
+            **legacy,
+            "protocol_version": "1.2",
+            "threshold_operator": 42,
+            "attributions": {"legacy": True},
+        },
+    )
 
 
 def test_v1_detector_capability_remains_compatible_with_pre_07_manifests():

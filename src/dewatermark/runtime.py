@@ -7,6 +7,7 @@ import logging
 import sys
 from typing import Any, Optional
 
+from .capability_projection import public_detector_capability
 from .config import DewatermarkConfig, assert_remote_allowed, resolve
 from .models import SCHEMA_VERSION, ExecutionPlan, RemovalMode
 from .providers import (
@@ -59,7 +60,7 @@ def capabilities(config: Optional[DewatermarkConfig] = None) -> dict[str, Any]:
             {
                 "registered_name": name,
                 **(
-                    manifest.to_dict()
+                    public_detector_capability(manifest)
                     if manifest is not None
                     else {
                         "identifier": name,

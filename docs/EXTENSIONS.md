@@ -163,6 +163,13 @@ responsible for the `independent=true` declaration. A legacy command manifest wi
 ordinary detection but cannot verify mitigation. Use the exact
 `CommandDetector` wrapper: a subclass can add behavior outside the external
 implementation commitment and is therefore not accepted for verification.
+The public factory identity binds exact non-path argv values but replaces code,
+secret-file, and other file/path-looking values with stable role markers; code
+bytes are bound by the separate semantic and exact-raw digests. Only direct
+reviewed executables and explicitly parsed Python script launches can establish
+those digests. Shell, `env`, Node, Perl, Ruby, PowerShell, and other unparsed
+dispatch forms may still be used as ordinary trusted commands, but cannot act
+as profile-bound or held-out verifiers.
 
 The command receives one versioned JSON object on stdin and returns one JSON
 object on stdout. It is launched with `shell=False`; time, stdout, and stderr
@@ -173,6 +180,31 @@ child's individual sockets, enforce finer query limits inside the adapter or an
 OS/container boundary. See
 [`schemas/command-detector-protocol-v1.json`](../schemas/command-detector-protocol-v1.json)
 and [`examples/detector_adapter.py`](../examples/detector_adapter.py).
+
+Protocol 1.2 detectors may additionally declare bounded native attribution:
+
+```python
+manifest = command_detector_manifest(
+    # The ordinary identifier, scheme, configuration, threshold, and identity
+    # arguments are omitted here only for brevity.
+    identifier="example-attributing-detector",
+    schemes=("example",),
+    configuration_sha256=detector_configuration_sha256(public_config),
+    threshold=4.0,
+    attribution_kind="token_character_spans",
+    maximum_attributions=256,
+)
+```
+
+An opted-in command receives the same kind and maximum in the request's
+`attribution` object and must return an `attributions` array. Each entry contains
+only `start`, `end`, and `score`, plus optional numeric `p_value` and `threshold`.
+Offsets use Unicode code-point positions (Python string indexes) and half-open
+ranges. The adapter rejects unknown per-span fields, text-bearing token values,
+non-finite numbers, overlapping or out-of-range spans, and responses beyond either the
+declared maximum or `effective_tokens`. The resulting localization is an editing
+hint, not a clearance claim; final acceptance still requires the independent
+held-out verification path.
 
 ## Bounded command strategies
 

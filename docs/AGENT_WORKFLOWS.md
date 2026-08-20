@@ -106,9 +106,10 @@ request shape.
 - Stop on unsupported detection or verification. Never silently disable a
   required quality gate or substitute a synthetic reference detector.
 
-Never infer that `not_detected` means human-written. Claude currently produces
-an explicit unsupported result because this package has no public production
-Claude detector configuration.
+Never infer that `not_detected` means human-written. Anthropic has disclosed the
+SynthID-Text scheme family, but Claude still produces an explicit unsupported
+result because this package has no deployed Claude configuration, keys,
+calibrated thresholds, or detector contract.
 
 See [Detector-guided mitigation](DETECTOR_GUIDED_MITIGATION.md) for the full
 decision path and [Configuration](CONFIGURATION.md) for limits and permissions.

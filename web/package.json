@@ -1,6 +1,6 @@
 {
   "name": "@cyzanfar/dewatermark-unicode",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Context-aware, local-only Unicode text watermark artifact inspection and sanitation.",
   "type": "module",
   "exports": {

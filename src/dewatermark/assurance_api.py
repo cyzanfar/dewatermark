@@ -16,6 +16,7 @@ from typing import Any, Mapping, Optional
 
 from .assurance import inspect as detector_inspect
 from .assurance import verify as detector_verify
+from .capability_projection import public_detector_capability
 from .config import DewatermarkConfig, get_config
 from .exceptions import ConfigurationError
 from .extension_safety import (
@@ -40,11 +41,13 @@ _OPTION_DEFAULTS: dict[str, int | float] = {
 }
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PUBLIC_CAPABILITY_METADATA = {
+    "attribution_kind",
     "calibration",
     "command_protocol_version",
     "configuration_sha256",
     "evidence_level",
     "license",
+    "maximum_attributions",
     "minimum_effective_tokens",
     "score_direction",
     "secret_binding",
@@ -146,13 +149,16 @@ def _detector_policy(identifier: str, cfg: DewatermarkConfig) -> dict[str, Any]:
             "detector has no loaded static capability manifest; "
             "explicitly load or register the trusted detector before planning"
         )
-    public_metadata = capability.to_dict()["metadata"]
+    public_metadata = public_detector_capability(capability)["metadata"]
     raw_status = public_metadata.get("status")
     status = (
         raw_status
         if isinstance(raw_status, str) and _IDENTIFIER.fullmatch(raw_status)
         else "registered"
     )
+    selected_metadata = {
+        key: value for key, value in public_metadata.items() if key in _PUBLIC_CAPABILITY_METADATA
+    }
     return {
         "identifier": capability.identifier,
         "version": capability.version,
@@ -165,12 +171,8 @@ def _detector_policy(identifier: str, cfg: DewatermarkConfig) -> dict[str, Any]:
         "independent": capability.independent,
         "available": not status.startswith("unsupported"),
         "status": status,
-        "metadata": {
-            key: value
-            for key, value in public_metadata.items()
-            if key in _PUBLIC_CAPABILITY_METADATA
-        },
-        "registration": registration,
+        "metadata": selected_metadata,
+        "registration": {key: value for key, value in registration.items() if key != "capability"},
     }
 
 
@@ -368,10 +370,18 @@ def _reviewed_extensions(
     detector_policy = public.get("detector")
     if not isinstance(detector_policy, Mapping):
         raise PlanMismatchError("reviewed detector policy is incomplete")
-    detector_registration = detector_policy.get("registration")
-    if not isinstance(detector_registration, Mapping):
+    reviewed_detector_registration = detector_policy.get("registration")
+    if not isinstance(reviewed_detector_registration, Mapping):
         raise PlanMismatchError("reviewed detector registration is incomplete")
-    registrations[("detector", detector.strip().lower())] = detector_registration
+    current_detector_registration = detector_identity(detector)
+    if current_detector_registration is None:
+        raise PlanMismatchError("reviewed detector registration is no longer available")
+    current_public_registration = {
+        key: value for key, value in current_detector_registration.items() if key != "capability"
+    }
+    if current_public_registration != dict(reviewed_detector_registration):
+        raise PlanMismatchError("reviewed detector registration changed before execution")
+    registrations[("detector", detector.strip().lower())] = current_detector_registration
 
     for name, policy_key in (
         (cfg.rewriter_provider, "rewriter_capability"),

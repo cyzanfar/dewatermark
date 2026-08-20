@@ -4,6 +4,42 @@ This project follows Semantic Versioning. Public changes are recorded here.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-20
+
+### Added
+
+- Command detector protocol 1.2 with strictly bounded numeric token-to-character
+  contribution ranges, plus a deterministic context-aware minimal-edit strategy
+  that can use those ranges only to propose centrally quality-gated candidates.
+- An operator-sealed, offline SynthID Text research pack for one exact public
+  Google DeepMind reference configuration. It binds public target/configuration,
+  tokenizer, masking, runtime, private-key-channel, portable conformance, and
+  pinned-upstream replay identities while remaining explicitly uncalibrated,
+  non-independent, non-production, and non-vendor-equivalent.
+- Content-addressed, operator-scoped mitigation profiles that bind exact
+  detector, held-out verifier, strategy, quality-policy, random-seed, search-
+  limit, watermark-target, and preregistered-protocol identities. Static
+  profile inspection does not load plugins; execution requires explicit
+  consent and records the profile binding in the mitigation receipt. Profile
+  payloads are deeply immutable and protocol-only: v1 cannot attach result
+  evidence or promote an aggregate claim.
+- A frozen SynthID Text research benchmark preregistration using the same
+  disjoint-key, matched-control, held-out-detector, quality, budget, checkpoint,
+  and exact-replay requirements as the KGW runner. It contains no efficacy
+  result and makes no Claude or Gemini production claim.
+
+### Changed
+
+- Public detector reports now expose attribution metadata only for a complete
+  protocol 1.2 contract; legacy extension-name collisions remain private and
+  cannot be reinterpreted as attribution capabilities.
+- Strict frozen evidence binds the preregistered watermark family, detector
+  families, and real-versus-synthetic classification through additive
+  aggregation contract 1.2, while v0.7 contract 1.1 remains exactly
+  replayable. Profile payloads are deeply immutable and recheck exact
+  component, raw command-code, quality-policy, protocol, budget, and consent
+  identities before text can be accepted.
+
 ## [0.7.0] - 2026-08-18
 
 ### Added
