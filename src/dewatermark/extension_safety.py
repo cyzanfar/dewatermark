@@ -566,6 +566,60 @@ def _command_detector_factory_state(
     return True
 
 
+def _pinned_provider_strategy_state(
+    value: Any,
+    digest: Any,
+    seen: set[int],
+    budget: list[int],
+    depth: int,
+) -> bool:
+    """Hash the exact host wrapper without traversing host dependency graphs."""
+    value_type = type(value)
+    if (
+        type.__getattribute__(value_type, "__module__") != "dewatermark.profiles"
+        or type.__getattribute__(value_type, "__name__") != "_PinnedProviderStrategy"
+    ):
+        return False
+    # As with CommandDetectorFactory, only the exact host-reviewed type gets a
+    # narrow projection. Otherwise an extension could opt itself out of the
+    # generic state walk merely by copying this class name.
+    from .profiles import _PinnedProviderStrategy
+
+    if type(value) is not _PinnedProviderStrategy:
+        return False
+    state = object.__getattribute__(value, "__dict__")
+    expected_fields = {
+        "_provider_instance",
+        "_provider_identity",
+        "_identity_violation",
+        "capability",
+    }
+    if type(state) is not dict or set(state) != expected_fields:
+        raise ConfigurationError("pinned provider strategy state is invalid")
+    provider = state["_provider_instance"]
+    provider_identity = state["_provider_identity"]
+    identity_violation = state["_identity_violation"]
+    capability = state["capability"]
+    if (
+        type(provider_identity) is not dict
+        or type(identity_violation) is not bool
+        or type(capability) is not CapabilityManifest
+    ):
+        raise ConfigurationError("pinned provider strategy state is invalid")
+    _digest_scalar(digest, b"pinned-provider-strategy-state", b"v1")
+    # Bind both the provider's current observable state and the exact identity
+    # captured when it was pinned. Mutating either still invalidates the
+    # reviewed target, while the host wrapper's implementation remains bound by
+    # extension_identity().implementation_sha256. Avoiding a recursive walk of
+    # that implementation's imported helpers keeps the state budget independent
+    # of Python stdlib implementation size.
+    _state_digest(provider, digest, seen, budget, depth + 1)
+    _state_digest(provider_identity, digest, seen, budget, depth + 1)
+    _state_digest(identity_violation, digest, seen, budget, depth + 1)
+    _state_digest(capability, digest, seen, budget, depth + 1)
+    return True
+
+
 def _state_digest(
     value: Any,
     digest: Any,
@@ -608,6 +662,8 @@ def _state_digest(
     seen.add(identity)
     try:
         if _command_detector_factory_state(value, digest, seen, budget, depth):
+            return
+        if _pinned_provider_strategy_state(value, digest, seen, budget, depth):
             return
         if value_type in (list, tuple):
             _digest_scalar(digest, value_type.__name__.encode("ascii"), str(len(value)).encode())

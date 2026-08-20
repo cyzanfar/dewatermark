@@ -9,6 +9,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 import dewatermark
+import dewatermark.extension_safety as extension_safety
 import dewatermark.profiles as profile_module
 from dewatermark.cli import EXIT_OK, main
 from dewatermark.command_detector import (
@@ -680,6 +681,7 @@ def test_profile_direct_construction_is_validated_detached_and_deeply_immutable(
         dewatermark.MitigationProfile(invalid)
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO creation requires POSIX")
 def test_profile_loader_rejects_fifo_before_open(tmp_path, monkeypatch):
     fifo = tmp_path / "profile.fifo"
     os.mkfifo(fifo)
@@ -859,6 +861,26 @@ def test_profile_rechecks_pinned_provider_before_it_receives_text(
     profile = _profile()
     with pytest.raises(MitigationProfileError, match="identity changed"):
         mitigate_with_profile(SOURCE, profile, consent=True)
+
+
+def test_pinned_provider_identity_is_bounded_and_still_binds_provider_state(monkeypatch):
+    provider = ProfileStrategy()
+    pinned = profile_module._PinnedProviderStrategy(provider, provider.capability)
+    monkeypatch.setattr(extension_safety, "_IDENTITY_NODE_LIMIT", 256)
+
+    before = extension_safety.extension_identity(
+        pinned,
+        "transformer",
+        instance_sensitive=True,
+    )
+    provider.changed_after_pin = True
+    after = extension_safety.extension_identity(
+        pinned,
+        "transformer",
+        instance_sensitive=True,
+    )
+
+    assert before["static_state_sha256"] != after["static_state_sha256"]
 
 
 def test_profile_rejects_aggregate_evidence_construction_and_has_no_promotion_api(

@@ -293,6 +293,7 @@ def test_configuration_rejects_vendor_names_and_modern_access_tokens(adapter):
             adapter._validate_configuration(changed)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="owner-only mode checks require POSIX")
 def test_key_record_requires_owner_only_closed_json(adapter, tmp_path):
     key_file = tmp_path / "operator-key.json"
     key_file.write_text(
@@ -713,6 +714,7 @@ def test_synthid_attribution_reaches_context_aware_minimal_edit(adapter, monkeyp
     assert strategy.generate(source, context=context) == ("Yet signal prose remains clear.",)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="owner-only sealing requires POSIX")
 def test_sealer_emits_private_key_free_false_claims_transactionally(monkeypatch, tmp_path, adapter):
     sealer = _load(PACK / "seal_operator.py", "synthid_sealer_test")
     key_file = tmp_path / "key.json"
@@ -891,6 +893,7 @@ def test_sealer_emits_private_key_free_false_claims_transactionally(monkeypatch,
         )
 
 
+@pytest.mark.skipif(os.name != "posix", reason="owner-only sealing requires POSIX")
 def test_sealer_rolls_back_interrupted_pair_publication(monkeypatch, tmp_path):
     sealer = _load(PACK / "seal_operator.py", "synthid_sealer_rollback_test")
     output = tmp_path / "sealed"
