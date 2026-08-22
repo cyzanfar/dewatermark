@@ -1,5 +1,5 @@
-torch>=2.2
-transformers>=4.45
-sentence-transformers>=3.0   # MiniLM semantic similarity
+torch>=2.13.0
+transformers>=5.15.0
+sentence-transformers>=5.7.0   # MiniLM semantic similarity
 bert-score>=0.3.13           # contextual token-level similarity
 mauve-text>=0.4.0            # corpus-level distributional quality
